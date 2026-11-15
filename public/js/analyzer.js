@@ -218,18 +218,108 @@ export function detectRhetoricalDevices(text) {
   };
 }
 
+export function detectPitchHz(buffer, sampleRate = 44100) {
+  if (!buffer || buffer.length < 512 || !sampleRate) return null;
+
+  const half = Math.floor(buffer.length / 2);
+  let rmsSum = 0;
+  for (let i = 0; i < buffer.length; i++) {
+    rmsSum += buffer[i] * buffer[i];
+  }
+  const rms = Math.sqrt(rmsSum / buffer.length);
+  if (rms < 0.014) return null;
+
+  const minLag = Math.max(2, Math.floor(sampleRate / 360)); // 360 Hz ceiling
+  const maxLag = Math.min(half - 2, Math.ceil(sampleRate / 70)); // 70 Hz floor
+  if (maxLag <= minLag) return null;
+
+  const diff = new Float32Array(maxLag + 1);
+  for (let tau = 1; tau <= maxLag; tau++) {
+    let sum = 0;
+    for (let j = 0; j < half; j++) {
+      const delta = buffer[j] - buffer[j + tau];
+      sum += delta * delta;
+    }
+    diff[tau] = sum;
+  }
+
+  // Cumulative mean normalized difference function (YIN)
+  const cmndf = new Float32Array(maxLag + 1);
+  cmndf[0] = 1;
+  let runningSum = 0;
+  for (let tau = 1; tau <= maxLag; tau++) {
+    runningSum += diff[tau];
+    cmndf[tau] = runningSum > 0 ? (diff[tau] * tau) / runningSum : 1;
+  }
+
+  let bestTau = -1;
+  for (let tau = minLag; tau <= maxLag - 1; tau++) {
+    if (cmndf[tau] < 0.18) {
+      while (tau + 1 <= maxLag - 1 && cmndf[tau + 1] < cmndf[tau]) {
+        tau++;
+      }
+      bestTau = tau;
+      break;
+    }
+  }
+
+  if (bestTau === -1) {
+    let minVal = 1;
+    for (let tau = minLag; tau <= maxLag - 1; tau++) {
+      if (cmndf[tau] < minVal) {
+        minVal = cmndf[tau];
+        bestTau = tau;
+      }
+    }
+    if (minVal > 0.28) return null;
+  }
+
+  if (bestTau <= 0) return null;
+
+  // Parabolic interpolation for sub-sample frequency accuracy
+  const prev = cmndf[bestTau - 1] ?? cmndf[bestTau];
+  const curr = cmndf[bestTau];
+  const next = cmndf[bestTau + 1] ?? cmndf[bestTau];
+  const denom = 2 * (2 * curr - prev - next);
+  const refinedTau = denom !== 0 ? bestTau + (next - prev) / denom : bestTau;
+  if (refinedTau <= 0) return null;
+
+  const hz = sampleRate / refinedTau;
+  if (hz < 70 || hz > 360 || !Number.isFinite(hz)) return null;
+  return Number(hz.toFixed(1));
+}
+
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
+}
+
 export function analyzeAudioSamples(samples = [], durationSec = 0) {
+  const emptyAudio = {
+    hasAudio: false,
+    durationSec: Number(durationSec || 0),
+    strategicPauses: 0,
+    pauseRatio: 0,
+    avgPauseSec: 0,
+    dynamicRange: 0,
+    crescendoDelta: 0,
+    activeSpeechRatio: 0,
+    meanSpeakingRms: 0,
+    volumeLevel: 'unbekannt',
+    emphasisPeaks: 0,
+    clippedRatio: 0,
+    hasPitch: false,
+    medianPitchHz: 0,
+    pitchRangeSemitones: 0,
+    downwardCadences: 0,
+    uptalkCadences: 0,
+    authorityCadenceRatio: null,
+  };
+
   if (!Array.isArray(samples) || samples.length < 5 || durationSec <= 0.5) {
-    return {
-      hasAudio: false,
-      durationSec: Number(durationSec || 0),
-      strategicPauses: 0,
-      pauseRatio: 0,
-      avgPauseSec: 0,
-      dynamicRange: 0,
-      crescendoDelta: 0,
-      activeSpeechRatio: 0,
-    };
+    return emptyAudio;
   }
 
   const rmsValues = samples.map((s) => Number(s.rms || 0));
@@ -239,7 +329,7 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
   const speechThreshold = Math.max(0.012, noiseFloor * 2.2, peak * 0.16);
 
   // Trim leading and trailing silence for fair pause ratio
-  let firstActive = samples.findIndex((s) => s.rms >= speechThreshold);
+  const firstActive = samples.findIndex((s) => s.rms >= speechThreshold);
   let lastActive = -1;
   for (let i = samples.length - 1; i >= 0; i--) {
     if (samples[i].rms >= speechThreshold) {
@@ -250,14 +340,10 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
 
   if (firstActive === -1 || lastActive <= firstActive) {
     return {
+      ...emptyAudio,
       hasAudio: true,
       durationSec: Number(durationSec.toFixed(1)),
-      strategicPauses: 0,
-      pauseRatio: 0,
-      avgPauseSec: 0,
-      dynamicRange: 0,
-      crescendoDelta: 0,
-      activeSpeechRatio: 0,
+      volumeLevel: 'zu leise',
     };
   }
 
@@ -287,8 +373,9 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
       ? Number((pauseDurations.reduce((a, b) => a + b, 0) / strategicPauses).toFixed(2))
       : 0;
 
-  // Dynamic range on speaking frames only
-  const speakingRms = activeSlice.filter((s) => s.rms >= speechThreshold).map((s) => s.rms);
+  // Volume presence & dynamic range on speaking frames
+  const speakingFrames = activeSlice.filter((s) => s.rms >= speechThreshold);
+  const speakingRms = speakingFrames.map((s) => s.rms);
   const meanRms =
     speakingRms.length > 0 ? speakingRms.reduce((a, b) => a + b, 0) / speakingRms.length : 0;
   const variance =
@@ -297,6 +384,24 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
       : 0;
   const stdDev = Math.sqrt(variance);
   const dynamicRange = meanRms > 0 ? Number((stdDev / meanRms).toFixed(2)) : 0;
+
+  const clippedCount = speakingFrames.filter((s) => s.clipped).length;
+  const clippedRatio =
+    speakingFrames.length > 0 ? Number(((clippedCount / speakingFrames.length) * 100).toFixed(1)) : 0;
+
+  let volumeLevel = 'präsent';
+  if (meanRms < 0.022) volumeLevel = 'zu leise';
+  else if (meanRms > 0.36 || clippedRatio > 8) volumeLevel = 'übersteuert';
+
+  // Count distinct emphasis volume peaks separated by >= 0.8s
+  let emphasisPeaks = 0;
+  let lastPeakTime = -10;
+  for (const s of speakingFrames) {
+    if (s.rms >= meanRms * 1.42 && s.t - lastPeakTime >= 0.8) {
+      emphasisPeaks++;
+      lastPeakTime = s.t;
+    }
+  }
 
   // Crescendo: compare last 25% of speaking frames vs middle 50%
   const q1 = Math.floor(speakingRms.length * 0.25);
@@ -307,6 +412,66 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
   const endAvg = end.length > 0 ? end.reduce((a, b) => a + b, 0) / end.length : meanRms;
   const crescendoDelta = midAvg > 0 ? Number(((endAvg - midAvg) / midAvg).toFixed(2)) : 0;
 
+  // Pitch / Tonfall analysis
+  const validPitches = speakingFrames
+    .map((s) => Number(s.pitchHz))
+    .filter((hz) => Number.isFinite(hz) && hz >= 70 && hz <= 360);
+
+  let hasPitch = false;
+  let medianPitchHz = 0;
+  let pitchRangeSemitones = 0;
+  let downwardCadences = 0;
+  let uptalkCadences = 0;
+  let authorityCadenceRatio = null;
+
+  if (validPitches.length >= 6) {
+    hasPitch = true;
+    const sortedP = [...validPitches].sort((a, b) => a - b);
+    const p10 = sortedP[Math.floor(sortedP.length * 0.1)];
+    const p90 = sortedP[Math.floor(sortedP.length * 0.9)];
+    medianPitchHz = Number(median(sortedP).toFixed(1));
+    if (p10 > 0 && p90 > p10) {
+      pitchRangeSemitones = Number((12 * Math.log2(p90 / p10)).toFixed(1));
+    }
+
+    // Segment into utterances separated by >= 0.35s silence to measure sentence-ending inflection
+    const utterances = [];
+    let currentUtt = [];
+    let gapStart = null;
+    for (const sample of activeSlice) {
+      if (sample.rms >= speechThreshold) {
+        if (gapStart !== null && sample.t - gapStart >= 0.35 && currentUtt.length > 0) {
+          utterances.push(currentUtt);
+          currentUtt = [];
+        }
+        gapStart = null;
+        if (sample.pitchHz >= 70 && sample.pitchHz <= 360) {
+          currentUtt.push(sample.pitchHz);
+        }
+      } else if (gapStart === null) {
+        gapStart = sample.t;
+      }
+    }
+    if (currentUtt.length > 0) utterances.push(currentUtt);
+
+    let evaluatedUtt = 0;
+    for (const utt of utterances) {
+      if (utt.length < 6) continue;
+      evaluatedUtt++;
+      const splitIdx = Math.max(3, Math.floor(utt.length * 0.65));
+      const bodyMed = median(utt.slice(0, splitIdx));
+      const endMed = median(utt.slice(splitIdx));
+      if (bodyMed > 0 && endMed > 0) {
+        const diffSt = 12 * Math.log2(endMed / bodyMed);
+        if (diffSt <= -0.6) downwardCadences++;
+        else if (diffSt >= 0.8) uptalkCadences++;
+      }
+    }
+    if (evaluatedUtt > 0) {
+      authorityCadenceRatio = Math.round(((evaluatedUtt - uptalkCadences) / evaluatedUtt) * 100);
+    }
+  }
+
   return {
     hasAudio: true,
     durationSec: Number(durationSec.toFixed(1)),
@@ -316,6 +481,16 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
     dynamicRange,
     crescendoDelta,
     activeSpeechRatio: Number(((1 - pauseRatio) * 100).toFixed(1)),
+    meanSpeakingRms: Number(meanRms.toFixed(3)),
+    volumeLevel,
+    emphasisPeaks,
+    clippedRatio,
+    hasPitch,
+    medianPitchHz,
+    pitchRangeSemitones,
+    downwardCadences,
+    uptalkCadences,
+    authorityCadenceRatio,
   };
 }
 
@@ -426,12 +601,26 @@ export function analyzeSpeech({
     pausenScore = clamp(45 + Math.min(35, pauseCues * 5));
   }
 
-  // 3. Stimm-Dynamik & Crescendo
+  // 3. Stimm-Dynamik, Lautstärke-Präsenz & Tonfall (Pitch)
   let dynamikScore = 58;
   if (audio.hasAudio && audio.durationSec >= 8) {
-    const rangePts = clamp(audio.dynamicRange * 130, 10, 62);
-    const crescPts = audio.crescendoDelta > 0.05 ? 24 : audio.crescendoDelta > -0.05 ? 14 : 5;
-    dynamikScore = clamp(14 + rangePts + crescPts);
+    const rangePts = clamp(audio.dynamicRange * 75, 6, 32);
+    const crescPts = audio.crescendoDelta > 0.05 ? 16 : audio.crescendoDelta > -0.05 ? 9 : 3;
+    const volPts = audio.volumeLevel === 'präsent' ? 16 : audio.volumeLevel === 'zu leise' ? 4 : 9;
+
+    let pitchPts = 14;
+    if (audio.hasPitch) {
+      if (audio.pitchRangeSemitones >= 4.0 && audio.pitchRangeSemitones <= 10.0) pitchPts = 22;
+      else if (audio.pitchRangeSemitones >= 2.5) pitchPts = 14;
+      else pitchPts = 6; // monotonous
+
+      if (audio.authorityCadenceRatio !== null) {
+        pitchPts += audio.authorityCadenceRatio >= 75 ? 10 : audio.authorityCadenceRatio >= 50 ? 6 : 2;
+      } else {
+        pitchPts += 6;
+      }
+    }
+    dynamikScore = clamp(rangePts + crescPts + volPts + pitchPts);
   } else if (wordCount >= 15) {
     const exclam = (String(text).match(/[!?]/g) || []).length;
     dynamikScore = clamp(50 + Math.min(25, sentStdDev * 3.5) + Math.min(15, exclam * 5));
@@ -566,10 +755,42 @@ function buildCoachingFeedback({
         `Zu wenige Wirkungspausen (${audio.strategicPauses} erkannt). Nach einem starken Satz innerlich bis „21“ zählen, bevor du weiterredest.`
       );
     }
+
+    if (audio.volumeLevel === 'zu leise') {
+      improvements.push(
+        'Lautstärke zu zurückhaltend: Sprich spürbar aus dem Bauch/Brustraum, damit deine Stimme den Raum trägt.'
+      );
+    } else if (audio.volumeLevel === 'übersteuert') {
+      improvements.push(
+        'Mikrofon-Pegel sehr hoch/übersteuert: Etwas mehr Abstand zum Mikrofon halten, damit Dynamik sauber hörbar bleibt.'
+      );
+    } else if (audio.emphasisPeaks >= 2) {
+      strengths.push(`Klare Lautstärke-Präsenz mit ${audio.emphasisPeaks} hörbaren Betonungs-Akzenten.`);
+    }
+
     if (audio.crescendoDelta > 0.05) {
       strengths.push('Schönes Finale-Crescendo: Deine Stimmenergie steigt zum Schluss hin an.');
     } else {
       improvements.push('Stimm-Dynamik ausbauen: Starte ruhiger und baue zum letzten Absatz spürbar Energie auf.');
+    }
+
+    if (audio.hasPitch) {
+      if (audio.pitchRangeSemitones >= 4.0) {
+        strengths.push(
+          `Lebendiger Tonfall (${audio.pitchRangeSemitones} Halbtöne Stimmumfang, Ø ${audio.medianPitchHz} Hz) — nicht monoton.`
+        );
+      } else {
+        improvements.push(
+          `Tonfall noch etwas flach (${audio.pitchRangeSemitones} Halbtöne Umfang). Variiere gezielt zwischen ruhiger Tiefe und wacher Betonung.`
+        );
+      }
+      if (audio.uptalkCadences >= 2 && audio.authorityCadenceRatio !== null && audio.authorityCadenceRatio < 70) {
+        improvements.push(
+          `Satzenden gehen öfter nach oben (${audio.uptalkCadences}× Uptalk). Senke die Stimme am Satzpunkt ruhig ab — das wirkt sofort staatsmännischer.`
+        );
+      } else if (audio.downwardCadences >= 2) {
+        strengths.push(`Souveräne Satzend-Kadenz: Du schließt Aussagen ruhig nach unten ab (${audio.downwardCadences}×).`);
+      }
     }
   }
 
@@ -637,7 +858,7 @@ function buildCoachingFeedback({
     tempo: 'Nächster Schritt: Teleprompter bei 125 WPM ablesen, um das ruhige Staatsmann-Tempo zu verankern.',
     stilmittel: 'Nächster Schritt: Im Stilmittel-Labor 2 Runden Dreiklang & Kontrast-Pivot trainieren.',
     wirCharisma: 'Nächster Schritt: Im Storytelling-Builder deine eigene Geschichte in „Story of Self → Us → Now“ übersetzen.',
-    dynamik: 'Nächster Schritt: Eine Teleprompter-Rede mit bewusstem ▲-Crescendo am Ende aufnehmen.',
+    dynamik: 'Nächster Schritt: Eine Teleprompter-Rede mit ruhigem Einstieg, tiefem Satzende und Crescendo am Schluss aufnehmen.',
     klarheit: 'Nächster Schritt: Spontanrede mit Fokus auf kurze Schluss-Pointen ohne Füllwörter.',
   };
 

@@ -5,6 +5,7 @@ import {
   analyzeSpeech,
   buildTrainingPlan,
   detectFillers,
+  detectPitchHz,
   detectRhetoricalDevices,
   matchMandatoryWords,
 } from '../public/js/analyzer.js';
@@ -58,6 +59,49 @@ test('analyzes audio samples for strategic pauses and crescendo', () => {
   assert.equal(audio.strategicPauses, 2);
   assert.ok(audio.pauseRatio > 15 && audio.pauseRatio < 45);
   assert.ok(audio.crescendoDelta > 0.2, 'should detect crescendo at end');
+  assert.equal(audio.volumeLevel, 'präsent');
+});
+
+test('detectPitchHz accurately extracts fundamental frequency from waveforms', () => {
+  const sr = 44100;
+  const makeSine = (hz, amp = 0.2) => {
+    const buf = new Float32Array(2048);
+    for (let i = 0; i < buf.length; i++) {
+      buf[i] = amp * Math.sin((2 * Math.PI * hz * i) / sr);
+    }
+    return buf;
+  };
+  const f120 = detectPitchHz(makeSine(120), sr);
+  assert.ok(f120 >= 118 && f120 <= 122, `expected ~120 Hz, got ${f120}`);
+
+  const f210 = detectPitchHz(makeSine(210), sr);
+  assert.ok(f210 >= 207 && f210 <= 213, `expected ~210 Hz, got ${f210}`);
+
+  assert.equal(detectPitchHz(makeSine(120, 0.002), sr), null, 'silence should return null');
+});
+
+test('analyzes pitch range, volume level, and downward authority cadence', () => {
+  const samples = [];
+  // Utterance 1: 0.0 - 1.2s, starts ~140 Hz and drops to ~110 Hz (downward authority)
+  for (let i = 0; i < 12; i++) {
+    samples.push({ t: i * 0.1, rms: i === 5 ? 0.15 : 0.07, pitchHz: i < 8 ? 140 : 108 });
+  }
+  // Pause 1.2 - 1.8s
+  for (let i = 12; i < 18; i++) {
+    samples.push({ t: i * 0.1, rms: 0.003, pitchHz: null });
+  }
+  // Utterance 2: 1.8 - 3.0s, starts ~155 Hz and drops to ~115 Hz (downward authority)
+  for (let i = 18; i < 30; i++) {
+    samples.push({ t: i * 0.1, rms: i === 24 ? 0.16 : 0.08, pitchHz: i < 26 ? 155 : 114 });
+  }
+
+  const audio = analyzeAudioSamples(samples, 3.0);
+  assert.equal(audio.hasPitch, true);
+  assert.ok(audio.pitchRangeSemitones >= 4.0, `expected >= 4 semitones, got ${audio.pitchRangeSemitones}`);
+  assert.equal(audio.downwardCadences, 2);
+  assert.equal(audio.uptalkCadences, 0);
+  assert.equal(audio.authorityCadenceRatio, 100);
+  assert.ok(audio.emphasisPeaks >= 2);
 });
 
 test('scores Obama-style speech higher than filler-heavy speech and generates 3-step plan', () => {

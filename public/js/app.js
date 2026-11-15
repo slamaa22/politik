@@ -216,6 +216,9 @@ function renderAnalysisCard(container, title, analysis) {
       <div class="metric-pill num"><strong>Wörter:</strong> ${analysis.wordCount}</div>
       <div class="metric-pill num"><strong>Tempo:</strong> ${analysis.wpm ? `${analysis.wpm} WPM` : '—'}</div>
       <div class="metric-pill num"><strong>Wirkungspausen:</strong> ${analysis.audio.hasAudio ? `${analysis.audio.strategicPauses} (${analysis.audio.pauseRatio}%)` : '—'}</div>
+      <div class="metric-pill num"><strong>Lautstärke:</strong> ${analysis.audio.hasAudio ? `${analysis.audio.volumeLevel} (${analysis.audio.emphasisPeaks} Akzente)` : '—'}</div>
+      <div class="metric-pill num"><strong>Tonfall:</strong> ${analysis.audio.hasPitch ? `${analysis.audio.pitchRangeSemitones} Halbtöne · ${analysis.audio.medianPitchHz} Hz` : '—'}</div>
+      <div class="metric-pill num"><strong>Satzende:</strong> ${analysis.audio.authorityCadenceRatio !== null ? `${analysis.audio.authorityCadenceRatio}% sicher (${analysis.audio.downwardCadences} fallend)` : '—'}</div>
       <div class="metric-pill num"><strong>Wir / Ich:</strong> ${analysis.weCount} / ${analysis.iCount}</div>
       <div class="metric-pill num"><strong>Stilmittel:</strong> ${analysis.devices.totalDevices}</div>
       <div class="metric-pill num"><strong>Füllwörter:</strong> ${analysis.fillers.totalCount}</div>
@@ -389,8 +392,11 @@ function evaluateBaselineStep() {
     analysis,
   };
 
+  const audioHint = analysis.audio.hasAudio
+    ? ` · ${analysis.audio.strategicPauses} Pausen · Pegel: ${analysis.audio.volumeLevel}${analysis.audio.hasPitch ? ` · Tonfall: ${analysis.audio.pitchRangeSemitones} HT` : ''}`
+    : '';
   document.getElementById('baseSavedSummary').textContent =
-    `Teil ${part.step} ausgewertet: ${analysis.obamaIndex}/100 (${analysis.wpm ? `${analysis.wpm} WPM` : `${analysis.wordCount} Wörter`})`;
+    `Teil ${part.step} ausgewertet: ${analysis.obamaIndex}/100 (${analysis.wpm ? `${analysis.wpm} WPM` : `${analysis.wordCount} Wörter`}${audioHint})`;
 
   document.querySelectorAll('#baseStepPills .step-pill')[baselineState.stepIdx]?.classList.add('done');
   updateBaselineButtons();

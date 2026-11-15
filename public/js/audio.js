@@ -1,4 +1,5 @@
-// Web Audio API Recorder, Waveform Visualizer & Optional German Speech-to-Text
+// Web Audio API Recorder, Waveform Visualizer, Pitch Tracker & Optional German Speech-to-Text
+import { detectPitchHz } from './analyzer.js';
 
 export class SpeechStudioRecorder {
   constructor({ canvas, onTranscript, onTick, onStatus, onSpeechError } = {}) {
@@ -54,7 +55,7 @@ export class SpeechStudioRecorder {
     this.audioCtx = new AudioCtx();
     const source = this.audioCtx.createMediaStreamSource(this.stream);
     this.analyser = this.audioCtx.createAnalyser();
-    this.analyser.fftSize = 1024;
+    this.analyser.fftSize = 2048;
     source.connect(this.analyser);
 
     try {
@@ -107,7 +108,7 @@ export class SpeechStudioRecorder {
         if (event.error === 'not-allowed') {
           this.onSpeechError('Spracherkennung blockiert.');
         } else if (event.error === 'network') {
-          this.onSpeechError('Live-Transkription offline/nicht erreichbar – Audioaufnahme & Pausen/Dynamik laufen lokal weiter.');
+          this.onSpeechError('Live-Transkription offline/nicht erreichbar – Audioaufnahme, Pausen, Lautstärke & Tonfall laufen lokal weiter.');
         }
       };
 
@@ -128,24 +129,36 @@ export class SpeechStudioRecorder {
     }
   }
 
-  #computeRms() {
-    if (!this.analyser) return 0;
+  #sampleFrame() {
+    if (!this.analyser || !this.audioCtx) {
+      return { rms: 0, pitchHz: null, clipped: false };
+    }
     const data = new Float32Array(this.analyser.fftSize);
     this.analyser.getFloatTimeDomainData(data);
     let sum = 0;
+    let clipped = false;
     for (let i = 0; i < data.length; i++) {
-      sum += data[i] * data[i];
+      const v = data[i];
+      if (Math.abs(v) >= 0.98) clipped = true;
+      sum += v * v;
     }
-    return Math.sqrt(sum / data.length);
+    const rms = Math.sqrt(sum / data.length);
+    const pitchHz = rms >= 0.015 ? detectPitchHz(data, this.audioCtx.sampleRate) : null;
+    return { rms, pitchHz, clipped };
   }
 
   #startSamplingLoop() {
     this.sampleIntervalId = setInterval(() => {
       if (!this.isRecording) return;
       const elapsed = (performance.now() - this.startTime) / 1000;
-      const rms = this.#computeRms();
-      this.samples.push({ t: Number(elapsed.toFixed(2)), rms: Number(rms.toFixed(4)) });
-      this.onTick({ elapsed, rms, samplesCount: this.samples.length });
+      const { rms, pitchHz, clipped } = this.#sampleFrame();
+      this.samples.push({
+        t: Number(elapsed.toFixed(2)),
+        rms: Number(rms.toFixed(4)),
+        pitchHz,
+        clipped,
+      });
+      this.onTick({ elapsed, rms, pitchHz, clipped, samplesCount: this.samples.length });
     }, 80);
   }
 
