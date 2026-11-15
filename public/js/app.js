@@ -1008,6 +1008,7 @@ let tpScrollRaf = null;
 let tpIsScrolling = false;
 let tpRecorder = null;
 let tpLastTimestamp = 0;
+let tpScrollPos = 0;
 
 function getAllSpeeches() {
   return [...appState.customSpeeches, ...TELEPROMPTER_SPEECHES];
@@ -1034,6 +1035,7 @@ function loadSelectedSpeechIntoPrompter() {
   const speech = getSelectedSpeech();
   document.getElementById('tpTechniqueBadge').textContent = speech.technique;
   document.getElementById('tpScrollContent').innerHTML = formatCuedSpeechHtml(speech.text);
+  tpScrollPos = 0;
   document.getElementById('tpScrollContent').scrollTop = 0;
   if (speech.targetWpm) {
     document.getElementById('tpWpmSlider').value = speech.targetWpm;
@@ -1045,13 +1047,14 @@ function stepTeleprompterScroll(ts) {
   if (!tpIsScrolling) return;
   const content = document.getElementById('tpScrollContent');
   if (!tpLastTimestamp) tpLastTimestamp = ts;
-  const dt = (ts - tpLastTimestamp) / 1000;
+  const dt = Math.min(0.1, (ts - tpLastTimestamp) / 1000);
   tpLastTimestamp = ts;
 
   const wpm = Number(document.getElementById('tpWpmSlider').value);
   const fontSize = Number(document.getElementById('tpFontSlider').value);
   const pxPerSec = (wpm / 125) * (fontSize * 1.15);
-  content.scrollTop += pxPerSec * dt;
+  tpScrollPos += pxPerSec * dt;
+  content.scrollTop = tpScrollPos;
 
   if (content.scrollTop + content.clientHeight < content.scrollHeight - 2) {
     tpScrollRaf = requestAnimationFrame(stepTeleprompterScroll);
@@ -1125,8 +1128,11 @@ function initTeleprompterView() {
   const playBtn = document.getElementById('tpPlayScrollBtn');
   const pauseBtn = document.getElementById('tpPauseScrollBtn');
   const stopBtn = document.getElementById('tpStopRecBtn');
+  const tpNoticeEl = document.getElementById('tpSpeechNotice');
 
   playBtn.addEventListener('click', async () => {
+    tpNoticeEl.classList.add('hidden');
+    tpScrollPos = document.getElementById('tpScrollContent').scrollTop;
     tpIsScrolling = true;
     tpLastTimestamp = 0;
     tpScrollRaf = requestAnimationFrame(stepTeleprompterScroll);
@@ -1140,12 +1146,18 @@ function initTeleprompterView() {
         onTick: ({ elapsed }) => {
           document.getElementById('tpTimer').textContent = formatTime(elapsed);
         },
+        onSpeechError: (msg) => {
+          tpNoticeEl.textContent = msg;
+          tpNoticeEl.classList.remove('hidden');
+        },
       });
       try {
         await rec.start();
         tpRecorder = rec;
-      } catch {
+      } catch (err) {
         tpRecorder = null;
+        tpNoticeEl.textContent = `${err.message} (Teleprompter scrollt zum Üben trotzdem weiter.)`;
+        tpNoticeEl.classList.remove('hidden');
       }
     }
   });
@@ -1161,6 +1173,7 @@ function initTeleprompterView() {
   document.getElementById('tpResetScrollBtn').addEventListener('click', () => {
     tpIsScrolling = false;
     cancelAnimationFrame(tpScrollRaf);
+    tpScrollPos = 0;
     document.getElementById('tpScrollContent').scrollTop = 0;
     playBtn.classList.remove('hidden');
     playBtn.innerHTML = `${icon('play', 15)} <span>Prompter + Aufnahme starten</span>`;
@@ -1180,7 +1193,13 @@ function initTeleprompterView() {
     if (tpRecorder?.isRecording) {
       recResult = await tpRecorder.stop();
       renderAudioPlayback(document.getElementById('tpAudioPlayback'), recResult.audioUrl);
-      await autoTranscribeIfNeeded(recResult, { statusBtn: playBtn });
+      await autoTranscribeIfNeeded(recResult, { noticeEl: tpNoticeEl, statusBtn: playBtn });
+    }
+
+    if (recResult.durationSec < 2 && !recResult.transcript) {
+      tpNoticeEl.textContent = 'Keine Mikrofonaufnahme erfasst – bitte Mikrofon/HTTPS prüfen.';
+      tpNoticeEl.classList.remove('hidden');
+      return;
     }
 
     const analysis = analyzeSpeech({

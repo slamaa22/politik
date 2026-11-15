@@ -40,6 +40,11 @@ export class SpeechStudioRecorder {
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
+      if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        throw new Error(
+          'Mikrofon erfordert HTTPS (https://). Über unverschlüsseltes http:// blockiert dein Handy-Browser das Mikrofon.'
+        );
+      }
       throw new Error('Mikrofon-API wird von diesem Browser nicht unterstützt.');
     }
 
@@ -53,17 +58,37 @@ export class SpeechStudioRecorder {
 
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     this.audioCtx = new AudioCtx();
+    if (this.audioCtx.state === 'suspended') {
+      await this.audioCtx.resume();
+    }
     const source = this.audioCtx.createMediaStreamSource(this.stream);
     this.analyser = this.audioCtx.createAnalyser();
     this.analyser.fftSize = 2048;
     source.connect(this.analyser);
 
     try {
-      this.mediaRecorder = new MediaRecorder(this.stream);
+      const candidates = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+      ];
+      const chosenMime =
+        typeof MediaRecorder.isTypeSupported === 'function'
+          ? candidates.find((m) => MediaRecorder.isTypeSupported(m)) || ''
+          : '';
+      this.mediaRecorder = chosenMime
+        ? new MediaRecorder(this.stream, { mimeType: chosenMime })
+        : new MediaRecorder(this.stream);
       this.mediaRecorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) this.chunks.push(e.data);
       };
-      this.mediaRecorder.start(250);
+      try {
+        this.mediaRecorder.start(250);
+      } catch {
+        this.mediaRecorder.start();
+      }
     } catch {
       this.mediaRecorder = null;
     }
@@ -233,7 +258,8 @@ export class SpeechStudioRecorder {
       recordedBlob = await new Promise((resolve) => {
         this.mediaRecorder.onstop = () => {
           if (this.chunks.length > 0) {
-            const blob = new Blob(this.chunks, { type: this.mediaRecorder.mimeType || 'audio/webm' });
+            const mime = this.chunks[0]?.type || this.mediaRecorder.mimeType || 'audio/webm';
+            const blob = new Blob(this.chunks, { type: mime });
             resolve(blob);
           } else {
             resolve(null);
