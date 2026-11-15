@@ -52,9 +52,11 @@ const VIEW_HEADERS = {
 
 const appState = {
   baseline: null,
+  baselineProgress: { stepIdx: 0, stepResults: [null, null, null] },
   sessions: [],
   customSpeeches: [],
   storyDraft: { self: '', us: '', now: '' },
+  updatedAt: null,
 };
 
 function hydrateStaticIcons() {
@@ -65,42 +67,82 @@ function hydrateStaticIcons() {
   });
 }
 
-// --- Persistence Helpers ---
+function setSyncStatus(text, isError = false) {
+  const el = document.getElementById('syncStatusNote');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = isError ? '#d93025' : '';
+}
+
+// --- Server-Only Persistence Helpers ---
 async function loadState() {
   try {
-    const res = await fetch('/api/state');
-    if (res.ok) {
-      const data = await res.json();
-      Object.assign(appState, data);
-      localStorage.setItem('orator_backup_state', JSON.stringify(appState));
-      return;
-    }
+    localStorage.removeItem('orator_backup_state');
   } catch {
-    // Fallback to localStorage
+    // ignore storage access issues
   }
-  const backup = localStorage.getItem('orator_backup_state');
-  if (backup) {
-    try {
-      Object.assign(appState, JSON.parse(backup));
-    } catch {
-      // ignore
-    }
+  try {
+    const res = await fetch('/api/state', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    appState.baseline = data.baseline || null;
+    appState.baselineProgress = data.baselineProgress || { stepIdx: 0, stepResults: [null, null, null] };
+    appState.sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    appState.customSpeeches = Array.isArray(data.customSpeeches) ? data.customSpeeches : [];
+    appState.storyDraft = data.storyDraft || { self: '', us: '', now: '' };
+    appState.updatedAt = data.updatedAt || null;
+    setSyncStatus('Auf Server gespeichert · Synchronisiert');
+    return true;
+  } catch (err) {
+    setSyncStatus('Server-Sync fehlgeschlagen – bitte neu laden', true);
+    return false;
   }
 }
 
 async function apiPost(url, payload) {
-  localStorage.setItem('orator_backup_state', JSON.stringify(appState));
   try {
     const res = await fetch(url, {
       method: 'POST',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (res.ok) return await res.json();
+    if (!res.ok) {
+      setSyncStatus('Speichern auf Server fehlgeschlagen', true);
+      return null;
+    }
+    const data = await res.json();
+    if (data?.updatedAt) appState.updatedAt = data.updatedAt;
+    if (data?.state?.updatedAt) appState.updatedAt = data.state.updatedAt;
+    setSyncStatus('Auf Server gespeichert · Synchronisiert');
+    return data;
   } catch {
-    // ignore offline
+    setSyncStatus('Server nicht erreichbar – nicht gespeichert', true);
+    return null;
   }
-  return null;
+}
+
+async function uploadAudioRecording(recResult) {
+  if (!recResult?.blob || recResult.serverAudioUrl) {
+    return recResult?.serverAudioUrl || recResult?.audioUrl || null;
+  }
+  try {
+    const res = await fetch('/api/audio', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': recResult.blob.type || 'audio/webm' },
+      body: recResult.blob,
+    });
+    if (!res.ok) return recResult.audioUrl || null;
+    const data = await res.json();
+    if (data?.ok && data.audioUrl) {
+      recResult.serverAudioUrl = data.audioUrl;
+      return data.audioUrl;
+    }
+  } catch {
+    // Fallback to local object URL in current tab only if upload fails
+  }
+  return recResult.audioUrl || null;
 }
 
 async function saveSession(sessionObj) {
@@ -110,7 +152,10 @@ async function saveSession(sessionObj) {
     ...sessionObj,
   };
   appState.sessions = [session, ...appState.sessions].slice(0, 200);
-  await apiPost('/api/sessions', session);
+  const saved = await apiPost('/api/sessions', session);
+  if (saved?.state) {
+    appState.sessions = saved.state.sessions;
+  }
   updateTopbarAndNav();
   renderDashboard();
   return session;
@@ -362,6 +407,101 @@ const baselineState = {
   lastRecording: null,
 };
 
+function renderBaselineResultCard(baselineObj) {
+  const resultCard = document.getElementById('baseResultCard');
+  const lockNotice = document.getElementById('baselineLockNotice');
+  if (!baselineObj) {
+    resultCard.classList.add('hidden');
+    lockNotice.classList.remove('callout-accent');
+    lockNotice.innerHTML =
+      '<span><strong>Schritt 1 vor dem Training:</strong> Absolviere zuerst diese 3-teilige Diagnose, damit wir dein echtes Startniveau messen und deinen Trainingsplan exakt festlegen.</span>';
+    return;
+  }
+
+  const { obamaIndex, levelLabel, dimensions, plan, parts = [] } = baselineObj;
+  resultCard.classList.remove('hidden');
+  document.getElementById('baseOverallScore').textContent = obamaIndex;
+  document.getElementById('baseResultHeadline').textContent = `${obamaIndex}/100 — ${levelLabel}`;
+  lockNotice.classList.add('callout-accent');
+  lockNotice.innerHTML =
+    '<span><strong>Eingangstest abgeschlossen.</strong> Dein Ausgangsprofil steht. Starte jetzt gezielt mit Priorität 1 deines Trainingsplans.</span>';
+
+  renderRadarChart(document.getElementById('baseRadarContainer'), dimensions);
+
+  const weakest = Object.entries(dimensions).sort((a, b) => a[1] - b[1])[0];
+  const strongest = Object.entries(dimensions).sort((a, b) => b[1] - a[1])[0];
+  document.getElementById('baseFeedbackContainer').innerHTML = `
+    <h3>Diagnose im Überblick</h3>
+    <ul class="feedback-list">
+      <li><strong>Größte Stärke:</strong> ${DIMENSION_META[strongest[0]].label} (${strongest[1]}/100)</li>
+      <li><strong>Größter Hebel:</strong> ${DIMENSION_META[weakest[0]].label} (${weakest[1]}/100)</li>
+      <li><strong>Teil 1 (Spontan):</strong> ${parts[0]?.obamaIndex ?? '—'}/100</li>
+      <li><strong>Teil 2 (Kadenz lesen):</strong> ${parts[1]?.obamaIndex ?? '—'}/100</li>
+      <li><strong>Teil 3 (Brückenbau):</strong> ${parts[2]?.obamaIndex ?? '—'}/100</li>
+    </ul>
+    <div class="callout callout-accent">
+      <span><strong>Fazit:</strong> Du hast jetzt deinen ehrlichen Ausgangswert. Mit gezieltem Pausen- und Dreiklang-Training steigt dieser Index rasch.</span>
+    </div>
+  `;
+
+  document.getElementById('basePlanCards').innerHTML = (plan || [])
+    .map(
+      (p) => `
+      <div class="plan-card">
+        <span class="eyebrow">Priorität ${p.priority} · ${p.currentScore}/100</span>
+        <h4>${p.title}</h4>
+        <p>${p.why}</p>
+        <p><strong>Ziel:</strong> ${p.goal}</p>
+        <button class="btn btn-sm btn-primary" data-launch-module="${p.module}" data-subdrill="${p.subdrill || ''}">
+          <span>Trainieren</span> ${icon('arrowRight', 14)}
+        </button>
+      </div>`
+    )
+    .join('');
+}
+
+function hydrateBaselineFromAppState() {
+  const progress = appState.baselineProgress;
+  if (Array.isArray(progress?.stepResults) && progress.stepResults.some(Boolean)) {
+    baselineState.stepResults = progress.stepResults;
+    const firstPending = progress.stepResults.findIndex((r) => !r);
+    baselineState.stepIdx = Number.isInteger(progress.stepIdx)
+      ? progress.stepIdx
+      : firstPending >= 0
+        ? firstPending
+        : 0;
+  } else if (Array.isArray(appState.baseline?.parts) && appState.baseline.parts.length === 3) {
+    baselineState.stepResults = appState.baseline.parts.map((p) => ({
+      partId: p.partId,
+      transcript: p.transcript || '',
+      durationSec: p.durationSec || 0,
+      audioUrl: p.audioUrl || null,
+      analysis: {
+        obamaIndex: p.obamaIndex,
+        wpm: p.wpm,
+        wordCount: p.wordCount,
+        audio: { strategicPauses: p.strategicPauses, hasAudio: false },
+        dimensions: appState.baseline.dimensions,
+      },
+    }));
+    baselineState.stepIdx = 0;
+  } else {
+    baselineState.stepResults = [null, null, null];
+    baselineState.stepIdx = 0;
+  }
+
+  renderBaselineStep();
+  renderBaselineResultCard(appState.baseline);
+}
+
+async function persistBaselineProgress() {
+  appState.baselineProgress = {
+    stepIdx: baselineState.stepIdx,
+    stepResults: baselineState.stepResults,
+  };
+  await apiPost('/api/baseline-progress', appState.baselineProgress);
+}
+
 function renderBaselineStep() {
   const part = BASELINE_PARTS[baselineState.stepIdx];
   document.getElementById('basePartTitle').textContent = part.title;
@@ -398,7 +538,10 @@ function renderBaselineStep() {
   const existing = baselineState.stepResults[baselineState.stepIdx];
   document.getElementById('baseTranscript').value = existing?.transcript || '';
   document.getElementById('baseSpeechNotice').classList.add('hidden');
-  renderAudioPlayback(document.getElementById('baseAudioPlayback'), null);
+  renderAudioPlayback(
+    document.getElementById('baseAudioPlayback'),
+    baselineState.lastRecording?.audioUrl || existing?.audioUrl || null
+  );
   updateBaselineWordChips(existing?.transcript || '');
   document.getElementById('baseSavedSummary').textContent = existing
     ? `Ausgewertet: ${existing.analysis.obamaIndex}/100`
@@ -433,7 +576,7 @@ function updateBaselineWordChips(text) {
   });
 }
 
-function evaluateBaselineStep() {
+async function evaluateBaselineStep() {
   const part = BASELINE_PARTS[baselineState.stepIdx];
   const transcriptEl = document.getElementById('baseTranscript');
   let text = transcriptEl.value.trim();
@@ -448,6 +591,11 @@ function evaluateBaselineStep() {
     return;
   }
 
+  const uploadedAudioUrl = rec ? await uploadAudioRecording(rec) : baselineState.stepResults[baselineState.stepIdx]?.audioUrl || null;
+  if (uploadedAudioUrl) {
+    renderAudioPlayback(document.getElementById('baseAudioPlayback'), uploadedAudioUrl);
+  }
+
   const analysis = analyzeSpeech({
     text,
     durationSec: rec?.durationSec || 0,
@@ -460,6 +608,7 @@ function evaluateBaselineStep() {
     partId: part.id,
     transcript: text,
     durationSec: rec?.durationSec || 0,
+    audioUrl: uploadedAudioUrl,
     analysis,
   };
 
@@ -471,6 +620,7 @@ function evaluateBaselineStep() {
 
   document.querySelectorAll('#baseStepPills .step-pill')[baselineState.stepIdx]?.classList.add('done');
   updateBaselineButtons();
+  await persistBaselineProgress();
 }
 
 async function finishBaselineTest() {
@@ -505,58 +655,18 @@ async function finishBaselineTest() {
       wpm: c.analysis.wpm,
       wordCount: c.analysis.wordCount,
       strategicPauses: c.analysis.audio.strategicPauses,
+      audioUrl: c.audioUrl || null,
       transcript: c.transcript,
     })),
     completedAt: new Date().toISOString(),
   };
 
   appState.baseline = baselineObj;
+  await persistBaselineProgress();
   await apiPost('/api/baseline', baselineObj);
   updateTopbarAndNav();
-
-  const resultCard = document.getElementById('baseResultCard');
-  resultCard.classList.remove('hidden');
-  document.getElementById('baseOverallScore').textContent = obamaIndex;
-  document.getElementById('baseResultHeadline').textContent = `${obamaIndex}/100 — ${baselineObj.levelLabel}`;
-  const lockNotice = document.getElementById('baselineLockNotice');
-  lockNotice.classList.add('callout-accent');
-  lockNotice.innerHTML =
-    '<span><strong>Eingangstest abgeschlossen.</strong> Dein Ausgangsprofil steht. Starte jetzt gezielt mit Priorität 1 deines Trainingsplans.</span>';
-
-  renderRadarChart(document.getElementById('baseRadarContainer'), dimensions);
-
-  const weakest = Object.entries(dimensions).sort((a, b) => a[1] - b[1])[0];
-  const strongest = Object.entries(dimensions).sort((a, b) => b[1] - a[1])[0];
-  document.getElementById('baseFeedbackContainer').innerHTML = `
-    <h3>Diagnose im Überblick</h3>
-    <ul class="feedback-list">
-      <li><strong>Größte Stärke:</strong> ${DIMENSION_META[strongest[0]].label} (${strongest[1]}/100)</li>
-      <li><strong>Größter Hebel:</strong> ${DIMENSION_META[weakest[0]].label} (${weakest[1]}/100)</li>
-      <li><strong>Teil 1 (Spontan):</strong> ${completed[0].analysis.obamaIndex}/100</li>
-      <li><strong>Teil 2 (Kadenz lesen):</strong> ${completed[1].analysis.obamaIndex}/100</li>
-      <li><strong>Teil 3 (Brückenbau):</strong> ${completed[2].analysis.obamaIndex}/100</li>
-    </ul>
-    <div class="callout callout-accent">
-      <span><strong>Fazit:</strong> Du hast jetzt deinen ehrlichen Ausgangswert. Mit gezieltem Pausen- und Dreiklang-Training steigt dieser Index rasch.</span>
-    </div>
-  `;
-
-  document.getElementById('basePlanCards').innerHTML = plan
-    .map(
-      (p) => `
-      <div class="plan-card">
-        <span class="eyebrow">Priorität ${p.priority} · ${p.currentScore}/100</span>
-        <h4>${p.title}</h4>
-        <p>${p.why}</p>
-        <p><strong>Ziel:</strong> ${p.goal}</p>
-        <button class="btn btn-sm btn-primary" data-launch-module="${p.module}" data-subdrill="${p.subdrill || ''}">
-          <span>Trainieren</span> ${icon('arrowRight', 14)}
-        </button>
-      </div>`
-    )
-    .join('');
-
-  resultCard.scrollIntoView({ behavior: 'smooth' });
+  renderBaselineResultCard(baselineObj);
+  document.getElementById('baseResultCard').scrollIntoView({ behavior: 'smooth' });
 }
 
 function initBaselineView() {
@@ -572,6 +682,7 @@ function initBaselineView() {
       baselineState.stepIdx = Number(pill.dataset.step);
       baselineState.lastRecording = null;
       renderBaselineStep();
+      persistBaselineProgress();
     });
   });
 
@@ -617,7 +728,7 @@ function initBaselineView() {
     startBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
     ampelEl.classList.remove('speaking', 'pause', 'rushing');
-    ampelEl.querySelector('.ampel-text').textContent = 'Transkribiere Aufnahme...';
+    ampelEl.querySelector('.ampel-text').textContent = 'Transkribiere & speichere...';
     renderAudioPlayback(document.getElementById('baseAudioPlayback'), result.audioUrl);
 
     await autoTranscribeIfNeeded(result, {
@@ -628,7 +739,7 @@ function initBaselineView() {
     });
 
     ampelEl.querySelector('.ampel-text').textContent = 'Aufnahme beendet';
-    evaluateBaselineStep();
+    await evaluateBaselineStep();
   });
 
   document.getElementById('baseAnalyzeStepBtn').addEventListener('click', evaluateBaselineStep);
@@ -637,12 +748,13 @@ function initBaselineView() {
       baselineState.stepIdx++;
       baselineState.lastRecording = null;
       renderBaselineStep();
+      persistBaselineProgress();
     }
   });
   document.getElementById('baseFinishBtn').addEventListener('click', finishBaselineTest);
   document.getElementById('goToDashboardBtn').addEventListener('click', () => switchView('dashboard'));
 
-  renderBaselineStep();
+  hydrateBaselineFromAppState();
 }
 
 // ================= MODULE 1: DASHBOARD =================
@@ -724,6 +836,7 @@ function renderDashboard() {
             <div>
               <strong>${s.title || s.type}</strong>
               <div class="muted-text num">${date} · ${s.analysis?.wordCount || 0} Wörter ${s.analysis?.wpm ? `· ${s.analysis.wpm} WPM` : ''}</div>
+              ${s.audioUrl ? `<div class="audio-playback"><audio controls preload="none" src="${s.audioUrl}"></audio></div>` : ''}
             </div>
             <div class="btn-group">
               <span class="badge badge-neutral num">${s.analysis?.obamaIndex ?? '—'}/100</span>
@@ -872,10 +985,16 @@ function initSpontanView() {
       analysis
     );
 
+    const audioUrl = spontanLastRec ? await uploadAudioRecording(spontanLastRec) : null;
+    if (audioUrl) {
+      renderAudioPlayback(document.getElementById('spontanAudioPlayback'), audioUrl);
+    }
+
     await saveSession({
       type: 'spontanrede',
       title: `Spontanrede: ${currentSpontanTopic.topic.slice(0, 52)}...`,
       analysis,
+      audioUrl,
       transcript: text,
     });
   };
@@ -1077,10 +1196,16 @@ function initTeleprompterView() {
       analysis
     );
 
+    const audioUrl = recResult.blob ? await uploadAudioRecording(recResult) : null;
+    if (audioUrl) {
+      renderAudioPlayback(document.getElementById('tpAudioPlayback'), audioUrl);
+    }
+
     await saveSession({
       type: 'teleprompter',
       title: `Ablesen: ${speech.title}`,
       analysis,
+      audioUrl,
       transcript: recResult.transcript || '(Teleprompter-Text)',
     });
   });
@@ -1225,10 +1350,16 @@ function initWordChallengeView() {
       analysis
     );
 
+    const audioUrl = wcState.lastRec ? await uploadAudioRecording(wcState.lastRec) : null;
+    if (audioUrl) {
+      renderAudioPlayback(document.getElementById('wcAudioPlayback'), audioUrl);
+    }
+
     await saveSession({
       type: 'wort-challenge',
       title: `Wort-Challenge: ${wcState.words.join(', ')}`,
       analysis,
+      audioUrl,
       transcript: text,
     });
   };
@@ -1289,10 +1420,13 @@ function initDrillsView() {
       Ø Länge: <strong>${analysis.audio.avgPauseSec}s</strong></div>
     `;
 
+    const audioUrl = await uploadAudioRecording(result);
+
     await saveSession({
       type: 'pausen-drill',
       title: `Pausen-Drill (${analysis.audio.strategicPauses} Pausen)`,
       analysis,
+      audioUrl,
       transcript: result.transcript,
     });
   };
@@ -1423,10 +1557,13 @@ function initDrillsView() {
       Score: <strong>${analysis.dimensions.stilmittel}/100</strong></div>
     `;
 
+    const audioUrl = styleLastRec ? await uploadAudioRecording(styleLastRec) : null;
+
     await saveSession({
       type: 'stilmittel',
       title: `Stilmittel-Drill (${analysis.devices.totalDevices} Figuren)`,
       analysis,
+      audioUrl,
       transcript: text,
     });
   };
@@ -1451,11 +1588,19 @@ function initDrillsView() {
     await apiPost('/api/story-draft', appState.storyDraft);
   };
 
+  let storyDebounceId = null;
+  [selfInput, usInput, nowInput].forEach((inputEl) => {
+    inputEl.addEventListener('input', () => {
+      clearTimeout(storyDebounceId);
+      storyDebounceId = setTimeout(saveStoryDraft, 600);
+    });
+  });
+
   document.getElementById('storySaveBtn').addEventListener('click', async () => {
     await saveStoryDraft();
     const box = document.getElementById('storyResultBox');
     box.classList.remove('hidden');
-    box.textContent = 'Entwurf gespeichert.';
+    box.textContent = 'Entwurf auf Server gespeichert.';
   });
 
   document.getElementById('storyCombineAnalyzeBtn').addEventListener('click', async () => {
@@ -1567,10 +1712,16 @@ function initDrillsView() {
     box.classList.remove('hidden');
     renderAnalysisCard(box, `Townhall-Antwort (${GEGENWIND_QUESTIONS[gwIdx].tag})`, analysis);
 
+    const audioUrl = gwLastRec ? await uploadAudioRecording(gwLastRec) : null;
+    if (audioUrl) {
+      renderAudioPlayback(document.getElementById('gwAudioPlayback'), audioUrl);
+    }
+
     await saveSession({
       type: 'gegenwind',
       title: `Gegenwind: ${GEGENWIND_QUESTIONS[gwIdx].tag}`,
       analysis,
+      audioUrl,
       transcript: text,
     });
   };
@@ -1620,6 +1771,33 @@ function initExportReport() {
   });
 }
 
+function isAnyRecordingActive() {
+  return Boolean(
+    baselineState.recorder?.isRecording ||
+      spontanRecorder?.isRecording ||
+      tpRecorder?.isRecording ||
+      wcState.recorder?.isRecording
+  );
+}
+
+async function syncFromServer() {
+  if (isAnyRecordingActive()) return;
+  const prevUpdated = appState.updatedAt;
+  const ok = await loadState();
+  if (!ok || appState.updatedAt === prevUpdated) return;
+
+  hydrateBaselineFromAppState();
+  populateSpeechSelect(document.getElementById('tpSpeechSelect')?.value || null);
+  const selfInput = document.getElementById('storySelfInput');
+  const usInput = document.getElementById('storyUsInput');
+  const nowInput = document.getElementById('storyNowInput');
+  if (selfInput && document.activeElement !== selfInput) selfInput.value = appState.storyDraft.self || '';
+  if (usInput && document.activeElement !== usInput) usInput.value = appState.storyDraft.us || '';
+  if (nowInput && document.activeElement !== nowInput) nowInput.value = appState.storyDraft.now || '';
+  updateTopbarAndNav();
+  renderDashboard();
+}
+
 // ================= BOOTSTRAP =================
 async function bootstrap() {
   hydrateStaticIcons();
@@ -1642,11 +1820,13 @@ async function bootstrap() {
     }
   });
 
-  document.getElementById('retestBaselineBtn').addEventListener('click', () => {
+  document.getElementById('retestBaselineBtn').addEventListener('click', async () => {
     baselineState.stepIdx = 0;
     baselineState.stepResults = [null, null, null];
     baselineState.lastRecording = null;
+    renderBaselineResultCard(null);
     renderBaselineStep();
+    await persistBaselineProgress();
     switchView('eingangstest');
   });
 
@@ -1654,7 +1834,9 @@ async function bootstrap() {
     if (!confirm('Trainingsverlauf wirklich zurücksetzen?')) return;
     appState.sessions = [];
     appState.baseline = null;
+    appState.baselineProgress = { stepIdx: 0, stepResults: [null, null, null] };
     await apiPost('/api/reset', { scope: 'all' });
+    hydrateBaselineFromAppState();
     updateTopbarAndNav();
     renderDashboard();
   });
@@ -1667,6 +1849,12 @@ async function bootstrap() {
   renderPlaybook();
   initExportReport();
   updateTopbarAndNav();
+  renderDashboard();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') syncFromServer();
+  });
+  window.addEventListener('focus', syncFromServer);
 
   if (appState.baseline) {
     switchView('dashboard');

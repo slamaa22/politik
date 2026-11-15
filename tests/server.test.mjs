@@ -50,7 +50,35 @@ test('HTTP server serves static app and persists baseline, sessions, speeches, a
     assert.equal(initialState.baseline, null);
     assert.deepEqual(initialState.sessions, []);
 
-    // 4. Save baseline
+    // 4. Save partial baseline progress & verify reload
+    const progRes = await fetch(`${baseUrl}/api/baseline-progress`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stepIdx: 1,
+        stepResults: [{ partId: 'part1', transcript: 'Test', analysis: { obamaIndex: 70 } }, null, null],
+      }),
+    }).then((r) => r.json());
+    assert.equal(progRes.baselineProgress.stepIdx, 1);
+    assert.equal(progRes.baselineProgress.stepResults[0].partId, 'part1');
+
+    // 5. Upload & stream audio file
+    const audioUp = await fetch(`${baseUrl}/api/audio`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'audio/webm' },
+      body: Buffer.from('FAKE_WEBM_AUDIO_BYTES'),
+    });
+    assert.equal(audioUp.status, 201);
+    const { audioUrl } = await audioUp.json();
+    assert.ok(audioUrl.startsWith('/api/audio/rec_'));
+    const audioGet = await fetch(`${baseUrl}${audioUrl}`);
+    assert.equal(audioGet.status, 200);
+    assert.equal(await audioGet.text(), 'FAKE_WEBM_AUDIO_BYTES');
+    const audioRange = await fetch(`${baseUrl}${audioUrl}`, { headers: { Range: 'bytes=0-3' } });
+    assert.equal(audioRange.status, 206);
+    assert.equal(await audioRange.text(), 'FAKE');
+
+    // 6. Save baseline
     const baseRes = await fetch(`${baseUrl}/api/baseline`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -61,7 +89,7 @@ test('HTTP server serves static app and persists baseline, sessions, speeches, a
     }).then((r) => r.json());
     assert.equal(baseRes.baseline.obamaIndex, 64);
 
-    // 5. Save session & custom speech
+    // 7. Save session & custom speech
     const sessRes = await fetch(`${baseUrl}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -76,13 +104,14 @@ test('HTTP server serves static app and persists baseline, sessions, speeches, a
     }).then((r) => r.json());
     assert.equal(speechRes.speech.title, 'Testrede');
 
-    // 6. Reset all
+    // 8. Reset all
     const resetRes = await fetch(`${baseUrl}/api/reset`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scope: 'all' }),
     }).then((r) => r.json());
     assert.equal(resetRes.baseline, null);
+    assert.equal(resetRes.baselineProgress.stepIdx, 0);
     assert.equal(resetRes.sessions.length, 0);
   } finally {
     await new Promise((resolve) => server.close(resolve));

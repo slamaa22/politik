@@ -19,8 +19,20 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon',
 };
 
+const AUDIO_MIME_TYPES = {
+  '.webm': 'audio/webm',
+  '.ogg': 'audio/ogg',
+  '.mp4': 'audio/mp4',
+  '.m4a': 'audio/mp4',
+  '.wav': 'audio/wav',
+};
+
 const DEFAULT_STATE = {
   baseline: null,
+  baselineProgress: {
+    stepIdx: 0,
+    stepResults: [null, null, null],
+  },
   sessions: [],
   customSpeeches: [],
   storyDraft: {
@@ -147,9 +159,16 @@ async function readState(dataFile) {
   const raw = await fs.readFile(dataFile, 'utf8');
   try {
     const parsed = JSON.parse(raw);
+    const bp = parsed.baselineProgress || {};
     return {
       ...DEFAULT_STATE,
       ...parsed,
+      baselineProgress: {
+        stepIdx: Number.isInteger(bp.stepIdx) ? bp.stepIdx : 0,
+        stepResults: Array.isArray(bp.stepResults) && bp.stepResults.length === 3
+          ? bp.stepResults
+          : [null, null, null],
+      },
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
       customSpeeches: Array.isArray(parsed.customSpeeches) ? parsed.customSpeeches : [],
       storyDraft: { ...DEFAULT_STATE.storyDraft, ...(parsed.storyDraft || {}) },
@@ -165,7 +184,9 @@ async function writeState(dataFile, nextState) {
     ...nextState,
     updatedAt: new Date().toISOString(),
   };
-  await fs.writeFile(dataFile, JSON.stringify(payload, null, 2), 'utf8');
+  const tmpFile = `${dataFile}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmpFile, JSON.stringify(payload, null, 2), 'utf8');
+  await fs.rename(tmpFile, dataFile);
   return payload;
 }
 
@@ -173,7 +194,8 @@ function sendJson(res, statusCode, body) {
   const data = JSON.stringify(body);
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    Pragma: 'no-cache',
   });
   res.end(data);
 }
@@ -192,10 +214,18 @@ async function readRawBody(req, maxBytes = 20 * 1024 * 1024) {
 }
 
 async function parseJsonBody(req) {
-  const buf = await readRawBody(req, 2 * 1024 * 1024);
+  const buf = await readRawBody(req, 5 * 1024 * 1024);
   const text = buf.toString('utf8').trim();
   if (!text) return {};
   return JSON.parse(text);
+}
+
+function getAudioExt(contentType = '') {
+  const ct = String(contentType).toLowerCase();
+  if (ct.includes('ogg')) return '.ogg';
+  if (ct.includes('mp4') || ct.includes('m4a')) return '.mp4';
+  if (ct.includes('wav')) return '.wav';
+  return '.webm';
 }
 
 export function createAppServer({
@@ -204,6 +234,7 @@ export function createAppServer({
   workerScript = path.join(__dirname, 'transcribe_worker.py'),
 } = {}) {
   const resolvedPublic = path.resolve(publicDir);
+  const audioDir = path.join(path.dirname(dataFile), 'audio');
   const whisper = createWhisperBridge(workerScript);
 
   const server = http.createServer(async (req, res) => {
@@ -220,19 +251,67 @@ export function createAppServer({
         return sendJson(res, 200, state);
       }
 
+      if (pathname === '/api/audio' && req.method === 'POST') {
+        const audioBuf = await readRawBody(req, 20 * 1024 * 1024);
+        if (!audioBuf.length) {
+          return sendJson(res, 400, { ok: false, error: 'Leere Audiodatei.' });
+        }
+        await fs.mkdir(audioDir, { recursive: true });
+        const ext = getAudioExt(req.headers['content-type']);
+        const fileName = `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+        await fs.writeFile(path.join(audioDir, fileName), audioBuf);
+        return sendJson(res, 201, { ok: true, audioUrl: `/api/audio/${fileName}` });
+      }
+
+      if (pathname.startsWith('/api/audio/') && req.method === 'GET') {
+        const rawName = path.basename(pathname.slice('/api/audio/'.length));
+        if (!/^rec_[a-z0-9_]+\.(webm|ogg|mp4|m4a|wav)$/i.test(rawName)) {
+          return sendJson(res, 400, { error: 'Ungültiger Dateiname.' });
+        }
+        const filePath = path.join(audioDir, rawName);
+        let stat;
+        try {
+          stat = await fs.stat(filePath);
+        } catch {
+          return sendJson(res, 404, { error: 'Audiodatei nicht gefunden.' });
+        }
+        const ext = path.extname(rawName).toLowerCase();
+        const contentType = AUDIO_MIME_TYPES[ext] || 'audio/webm';
+        const data = await fs.readFile(filePath);
+        const range = req.headers.range;
+        if (range) {
+          const match = /bytes=(\d*)-(\d*)/.exec(range);
+          const start = match && match[1] ? Number(match[1]) : 0;
+          const end = match && match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+          if (start >= stat.size || start > end) {
+            res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
+            return res.end();
+          }
+          const slice = data.subarray(start, end + 1);
+          res.writeHead(206, {
+            'Content-Type': contentType,
+            'Content-Length': slice.length,
+            'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'public, max-age=86400',
+          });
+          return res.end(slice);
+        }
+        res.writeHead(200, {
+          'Content-Type': contentType,
+          'Content-Length': data.length,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'public, max-age=86400',
+        });
+        return res.end(data);
+      }
+
       if (pathname === '/api/transcribe' && req.method === 'POST') {
         const audioBuf = await readRawBody(req, 20 * 1024 * 1024);
         if (!audioBuf.length) {
           return sendJson(res, 400, { ok: false, error: 'Leere Audiodatei.' });
         }
-        const contentType = String(req.headers['content-type'] || 'audio/webm').toLowerCase();
-        const ext = contentType.includes('ogg')
-          ? '.ogg'
-          : contentType.includes('mp4')
-            ? '.mp4'
-            : contentType.includes('wav')
-              ? '.wav'
-              : '.webm';
+        const ext = getAudioExt(req.headers['content-type']);
         const tmpFile = path.join(os.tmpdir(), `orator_${Date.now()}_${Math.random().toString(36).slice(2, 7)}${ext}`);
         try {
           await fs.writeFile(tmpFile, audioBuf);
@@ -250,6 +329,20 @@ export function createAppServer({
         } finally {
           await fs.rm(tmpFile, { force: true }).catch(() => {});
         }
+      }
+
+      if (pathname === '/api/baseline-progress' && req.method === 'POST') {
+        const body = await parseJsonBody(req);
+        const state = await readState(dataFile);
+        const stepIdx = Number.isInteger(body.stepIdx)
+          ? Math.max(0, Math.min(2, body.stepIdx))
+          : state.baselineProgress.stepIdx;
+        const stepResults = Array.isArray(body.stepResults) && body.stepResults.length === 3
+          ? body.stepResults
+          : state.baselineProgress.stepResults;
+        state.baselineProgress = { stepIdx, stepResults };
+        const saved = await writeState(dataFile, state);
+        return sendJson(res, 200, saved);
       }
 
       if (pathname === '/api/baseline' && req.method === 'POST') {
@@ -320,10 +413,12 @@ export function createAppServer({
         const body = await parseJsonBody(req);
         const state = await readState(dataFile);
         if (body.scope === 'all') {
+          await fs.rm(audioDir, { recursive: true, force: true }).catch(() => {});
           const saved = await writeState(dataFile, structuredClone(DEFAULT_STATE));
           return sendJson(res, 200, saved);
         }
         state.baseline = null;
+        state.baselineProgress = { stepIdx: 0, stepResults: [null, null, null] };
         const saved = await writeState(dataFile, state);
         return sendJson(res, 200, saved);
       }
