@@ -53,6 +53,10 @@
           <span class="nav-icon" data-icon="sliders" data-size="16"></span>
           <span>Drills &amp; Gegenwind</span>
         </button>
+        <button class="nav-item" data-view="diskussion">
+          <span class="nav-icon" data-icon="message" data-size="16"></span>
+          <span>Live-Diskussion</span>
+        </button>
         <button class="nav-item" data-view="playbook">
           <span class="nav-icon" data-icon="book" data-size="16"></span>
           <span>Playbook</span>
@@ -851,11 +855,16 @@
               </button>
               <button id="gwStopBtn" class="btn btn-danger hidden">
                 <span data-icon="square" data-size="15"></span>
-                <span>Antwort beenden</span>
+                <span>Beenden &amp; Analysieren</span>
               </button>
+            </div>
+            <div class="live-pausen-ampel" id="gwAmpel">
+              <span class="ampel-dot"></span>
+              <span class="ampel-text">Bereit</span>
             </div>
           </div>
           <canvas id="gwCanvas" class="waveform-canvas" width="760" height="72"></canvas>
+          <div id="gwSpeechNotice" class="speech-notice hidden"></div>
           <div id="gwAudioPlayback" class="audio-playback hidden"></div>
           <textarea id="gwTranscript" class="transcript-input" rows="4" placeholder="Deine Antwort (Transkript oder Text-Entwurf)..."></textarea>
           <div class="card-actions-end">
@@ -863,6 +872,83 @@
           </div>
           <div id="gwResultBox" class="subresult hidden"></div>
         </div>
+      </section>
+
+      <!-- ================= VIEW: LIVE-DISKUSSION ================= -->
+      <section id="view-diskussion" class="view">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow" id="discCatBadge">Kommunal &amp; Soziales</span>
+              <h2 id="discTopicTitle">Bezahlbares Wohnen vs. Investitionsstopp</h2>
+            </div>
+            <div class="toolbar-inline">
+              <select id="discPersonaSelect" class="select-input">
+                <option value="moderator" selected>Kritischer Moderator</option>
+                <option value="townhall">Skeptischer Bürger (Townhall)</option>
+                <option value="talkshow">Zuspitzender Debatten-Gegner</option>
+              </select>
+              <button id="discNewTopicBtn" type="button" class="btn btn-outline">
+                <span data-icon="shuffle" data-size="15"></span>
+                <span>Neues Thema</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="config-row">
+            <span class="badge badge-neutral num" id="discRoundBadge">Runde 1</span>
+            <label class="checkbox-label">
+              <input type="checkbox" id="discSpeakToggle" />
+              <span>Gegenfragen automatisch vorlesen</span>
+            </label>
+          </div>
+
+          <div id="discThread" class="debate-thread"></div>
+
+          <div class="studio-controls">
+            <div class="timer-display">
+              <span class="timer-label">Redebeitrag</span>
+              <strong id="discTimer" class="num">00:00</strong>
+            </div>
+            <div class="rec-buttons">
+              <button id="discStartBtn" type="button" class="btn btn-primary">
+                <span data-icon="mic" data-size="15"></span>
+                <span>Beitrag einsprechen</span>
+              </button>
+              <button id="discStopBtn" type="button" class="btn btn-danger hidden">
+                <span data-icon="square" data-size="15"></span>
+                <span>Stoppen &amp; Antworten</span>
+              </button>
+            </div>
+            <div class="live-pausen-ampel" id="discAmpel">
+              <span class="ampel-dot"></span>
+              <span class="ampel-text">Bereit</span>
+            </div>
+          </div>
+
+          <canvas id="discCanvas" class="waveform-canvas" width="760" height="70"></canvas>
+          <div id="discSpeechNotice" class="speech-notice hidden"></div>
+
+          <textarea
+            id="discTranscript"
+            class="transcript-input"
+            rows="3"
+            placeholder="Deine Erwiderung (live mitgeschrieben oder direkt eintippen)..."
+          ></textarea>
+
+          <div class="card-actions-between">
+            <button id="discFinishBtn" type="button" class="btn btn-outline">
+              <span data-icon="check" data-size="15"></span>
+              <span>Diskussion beenden &amp; Gesamtauswertung speichern</span>
+            </button>
+            <button id="discSendBtn" type="button" class="btn btn-primary">
+              <span>Antwort absenden</span>
+              <span data-icon="arrowRight" data-size="15"></span>
+            </button>
+          </div>
+        </div>
+
+        <div id="discSummaryCard" class="card hidden"></div>
       </section>
 
       <!-- ================= VIEW: PLAYBOOK ================= -->

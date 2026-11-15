@@ -256,19 +256,27 @@ export class SpeechStudioRecorder {
     let recordedBlob = null;
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       recordedBlob = await new Promise((resolve) => {
-        this.mediaRecorder.onstop = () => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
           if (this.chunks.length > 0) {
             const mime = this.chunks[0]?.type || this.mediaRecorder.mimeType || 'audio/webm';
-            const blob = new Blob(this.chunks, { type: mime });
-            resolve(blob);
+            resolve(new Blob(this.chunks, { type: mime }));
           } else {
             resolve(null);
           }
         };
+        const timeoutId = setTimeout(finish, 2500);
+        this.mediaRecorder.onstop = finish;
         try {
+          if (typeof this.mediaRecorder.requestData === 'function') {
+            try { this.mediaRecorder.requestData(); } catch { /* ignore */ }
+          }
           this.mediaRecorder.stop();
         } catch {
-          resolve(null);
+          finish();
         }
       });
       if (recordedBlob) {

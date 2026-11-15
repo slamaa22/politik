@@ -21,6 +21,11 @@ import {
   WORD_CHALLENGE_POOLS,
   WORD_CHALLENGE_TOPICS,
 } from './data.js';
+import {
+  DISCUSSION_PERSONAS,
+  DISCUSSION_TOPICS,
+  generateModeratorReply,
+} from './discussion.js';
 import { icon } from './icons.js';
 
 const VIEW_HEADERS = {
@@ -51,6 +56,10 @@ const VIEW_HEADERS = {
   drills: [
     'Drills & Gegenwind',
     'Gezielte Kurzübungen für Pausen, Stilmittel, Biografie und Schlagfertigkeit.',
+  ],
+  diskussion: [
+    'Live-Diskussion',
+    'Führe eine fortlaufende Debatte mit gezielten Rückfragen auf deine eigenen Antworten.',
   ],
   playbook: [
     'Playbook',
@@ -258,6 +267,15 @@ function computeCompetenceProfile() {
 }
 
 // --- Formatting & UI Helpers ---
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function formatTime(sec) {
   const s = Math.max(0, Math.round(sec));
   const mm = String(Math.floor(s / 60)).padStart(2, '0');
@@ -1816,6 +1834,13 @@ function initDrillsView() {
   let gwIdx = 0;
   let gwRec = null;
   let gwLastRec = null;
+  let gwEvaluating = false;
+  const gwNoticeEl = document.getElementById('gwSpeechNotice');
+  const gwAmpelEl = document.getElementById('gwAmpel');
+  const gwStartBtn = document.getElementById('gwStartBtn');
+  const gwStopBtn = document.getElementById('gwStopBtn');
+  const gwAnalyzeBtn = document.getElementById('gwAnalyzeBtn');
+  const gwTranscriptEl = document.getElementById('gwTranscript');
 
   const renderGwQuestion = () => {
     const q = GEGENWIND_QUESTIONS[gwIdx];
@@ -1826,79 +1851,127 @@ function initDrillsView() {
   renderGwQuestion();
 
   document.getElementById('gwNextBtn').addEventListener('click', () => {
+    if (gwRec?.isRecording) return;
     gwIdx = (gwIdx + 1) % GEGENWIND_QUESTIONS.length;
+    gwLastRec = null;
     renderGwQuestion();
-    document.getElementById('gwTranscript').value = '';
+    gwTranscriptEl.value = '';
+    document.getElementById('gwTimer').textContent = '00:00';
+    gwNoticeEl.classList.add('hidden');
+    document.getElementById('gwAudioPlayback').classList.add('hidden');
     document.getElementById('gwResultBox').classList.add('hidden');
+    gwAmpelEl.classList.remove('speaking', 'pause', 'rushing');
+    gwAmpelEl.querySelector('.ampel-text').textContent = 'Bereit';
   });
 
-  document.getElementById('gwStartBtn').addEventListener('click', async () => {
+  gwStartBtn.addEventListener('click', async () => {
+    gwNoticeEl.classList.add('hidden');
+    document.getElementById('gwResultBox').classList.add('hidden');
+    document.getElementById('gwAudioPlayback').classList.add('hidden');
+    document.getElementById('gwTimer').textContent = '00:00';
+    gwTranscriptEl.value = '';
     gwLastRec = null;
+
     const rec = new SpeechStudioRecorder({
       canvas: document.getElementById('gwCanvas'),
       onTranscript: (text) => {
-        document.getElementById('gwTranscript').value = text;
+        gwTranscriptEl.value = text;
       },
       onTick: ({ elapsed }) => {
         document.getElementById('gwTimer').textContent = formatTime(elapsed);
+        const rms = rec.samples[rec.samples.length - 1]?.rms || 0;
+        updateAmpel(gwAmpelEl, rms, rec.samples);
+      },
+      onSpeechError: (msg) => {
+        gwNoticeEl.textContent = msg;
+        gwNoticeEl.classList.remove('hidden');
       },
     });
     try {
       await rec.start();
       gwRec = rec;
-      document.getElementById('gwStartBtn').classList.add('hidden');
-      document.getElementById('gwStopBtn').classList.remove('hidden');
+      window.__oratorActiveGwRec = rec;
+      gwStartBtn.classList.add('hidden');
+      gwStopBtn.classList.remove('hidden');
     } catch (err) {
-      alert(err.message);
+      gwNoticeEl.textContent = `${err.message} — Du kannst deine Antwort auch direkt ins Textfeld eingeben.`;
+      gwNoticeEl.classList.remove('hidden');
     }
   });
 
   const finishGegenwind = async () => {
-    if (gwRec?.isRecording) {
-      gwLastRec = await gwRec.stop();
-      renderAudioPlayback(document.getElementById('gwAudioPlayback'), gwLastRec.audioUrl);
-    }
-    document.getElementById('gwStartBtn').classList.remove('hidden');
-    document.getElementById('gwStopBtn').classList.add('hidden');
+    if (gwEvaluating) return;
+    gwEvaluating = true;
+    gwStopBtn.disabled = true;
+    gwAnalyzeBtn.disabled = true;
 
-    const transcriptEl = document.getElementById('gwTranscript');
-    if (gwLastRec) {
-      await autoTranscribeIfNeeded(gwLastRec, {
-        transcriptEl,
-        statusBtn: document.getElementById('gwAnalyzeBtn'),
+    try {
+      if (gwRec?.isRecording) {
+        gwAmpelEl.classList.remove('speaking', 'pause', 'rushing');
+        gwAmpelEl.querySelector('.ampel-text').textContent = 'Beende Aufnahme...';
+        gwLastRec = await gwRec.stop();
+        window.__oratorActiveGwRec = null;
+        renderAudioPlayback(document.getElementById('gwAudioPlayback'), gwLastRec.audioUrl);
+      }
+      gwStartBtn.classList.remove('hidden');
+      gwStopBtn.classList.add('hidden');
+
+      if (gwLastRec) {
+        gwAmpelEl.querySelector('.ampel-text').textContent = 'Transkribiere & analysiere...';
+        await autoTranscribeIfNeeded(gwLastRec, {
+          transcriptEl: gwTranscriptEl,
+          noticeEl: gwNoticeEl,
+          statusBtn: gwAnalyzeBtn,
+        });
+      }
+
+      const text = gwTranscriptEl.value.trim();
+      if (!text && (!gwLastRec || gwLastRec.durationSec < 1.5)) {
+        gwNoticeEl.textContent =
+          'Bitte mindestens 2 Sekunden ins Mikrofon sprechen oder deine Antwort ins Textfeld eingeben.';
+        gwNoticeEl.classList.remove('hidden');
+        gwAmpelEl.querySelector('.ampel-text').textContent = 'Bereit';
+        return;
+      }
+
+      const analysis = analyzeSpeech({
+        text,
+        durationSec: gwLastRec?.durationSec || 0,
+        audioSamples: gwLastRec?.samples || [],
+        mode: 'gegenwind',
+        hasTranscript: Boolean(text),
       });
+
+      const box = document.getElementById('gwResultBox');
+      box.classList.remove('hidden');
+      renderAnalysisCard(box, `Townhall-Antwort (${GEGENWIND_QUESTIONS[gwIdx].tag})`, analysis);
+      gwAmpelEl.querySelector('.ampel-text').textContent = 'Ausgewertet';
+      box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+      const audioUrl = gwLastRec ? await uploadAudioRecording(gwLastRec) : null;
+      if (audioUrl) {
+        renderAudioPlayback(document.getElementById('gwAudioPlayback'), audioUrl);
+      }
+
+      await saveSession({
+        type: 'gegenwind',
+        title: `Gegenwind: ${GEGENWIND_QUESTIONS[gwIdx].tag}`,
+        analysis,
+        audioUrl,
+        transcript: text,
+      });
+    } catch (err) {
+      gwNoticeEl.textContent = `Fehler bei der Auswertung: ${err?.message || 'Unbekannter Fehler'}`;
+      gwNoticeEl.classList.remove('hidden');
+    } finally {
+      gwEvaluating = false;
+      gwStopBtn.disabled = false;
+      gwAnalyzeBtn.disabled = false;
     }
-
-    const text = transcriptEl.value.trim();
-    if (!text && (!gwLastRec || gwLastRec.durationSec < 3)) return;
-
-    const analysis = analyzeSpeech({
-      text,
-      durationSec: gwLastRec?.durationSec || 0,
-      audioSamples: gwLastRec?.samples || [],
-      mode: 'gegenwind',
-    });
-
-    const box = document.getElementById('gwResultBox');
-    box.classList.remove('hidden');
-    renderAnalysisCard(box, `Townhall-Antwort (${GEGENWIND_QUESTIONS[gwIdx].tag})`, analysis);
-
-    const audioUrl = gwLastRec ? await uploadAudioRecording(gwLastRec) : null;
-    if (audioUrl) {
-      renderAudioPlayback(document.getElementById('gwAudioPlayback'), audioUrl);
-    }
-
-    await saveSession({
-      type: 'gegenwind',
-      title: `Gegenwind: ${GEGENWIND_QUESTIONS[gwIdx].tag}`,
-      analysis,
-      audioUrl,
-      transcript: text,
-    });
   };
 
-  document.getElementById('gwStopBtn').addEventListener('click', finishGegenwind);
-  document.getElementById('gwAnalyzeBtn').addEventListener('click', finishGegenwind);
+  gwStopBtn.addEventListener('click', finishGegenwind);
+  gwAnalyzeBtn.addEventListener('click', finishGegenwind);
 }
 
 // ================= MODULE 5.5: LEKTIONEN & WERTUNGS-TESTS =================
@@ -2470,6 +2543,350 @@ function initLektionenView() {
   renderActiveRatedTest();
 }
 
+// ================= MODULE 5.8: LIVE-DISKUSSION =================
+const discState = {
+  topicIdx: 0,
+  persona: 'moderator',
+  history: [],
+  userTurns: [],
+  recorder: null,
+  lastRec: null,
+  submitting: false,
+};
+
+function speakDebatePrompt(text) {
+  if (!('speechSynthesis' in window) || !text) return;
+  try {
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.lang = 'de-DE';
+    utt.rate = 0.98;
+    window.speechSynthesis.speak(utt);
+  } catch {
+    // ignore speechSynthesis errors on unsupported devices
+  }
+}
+
+function renderDiscussionThread() {
+  const threadEl = document.getElementById('discThread');
+  if (!threadEl) return;
+
+  const roundNum = discState.userTurns.length + 1;
+  const roundBadge = document.getElementById('discRoundBadge');
+  if (roundBadge) {
+    roundBadge.textContent = `Runde ${roundNum}`;
+  }
+
+  threadEl.innerHTML = discState.history
+    .map((msg, idx) => {
+      if (msg.role === 'moderator') {
+        const personaLabel = DISCUSSION_PERSONAS[msg.persona || discState.persona]?.label || 'Moderator';
+        return `
+          <div class="debate-msg debate-msg-moderator">
+            <div class="debate-msg-head">
+              <span class="badge badge-neutral">${escapeHtml(msg.headLabel || personaLabel)}</span>
+              <button type="button" class="btn btn-outline btn-sm" data-disc-speak="${idx}" title="Vorlesen">
+                ${icon('play', 12)} <span>Vorlesen</span>
+              </button>
+            </div>
+            <p class="debate-msg-text">${escapeHtml(msg.text)}</p>
+            ${msg.rhetoricHint ? `<div class="debate-rhetoric-note">${escapeHtml(msg.rhetoricHint)}</div>` : ''}
+            ${msg.tip ? `<div class="debate-tip"><strong>Strategie:</strong> ${escapeHtml(msg.tip)}</div>` : ''}
+          </div>`;
+      }
+
+      const metaParts = [`${msg.analysis?.wordCount || 0} Wörter`];
+      if (msg.analysis?.wpm) metaParts.push(`${msg.analysis.wpm} WPM`);
+      if (Number.isFinite(msg.analysis?.obamaIndex)) metaParts.push(`${msg.analysis.obamaIndex}/100`);
+
+      return `
+        <div class="debate-msg debate-msg-user">
+          <div class="debate-msg-head">
+            <span class="badge badge-accent">Dein Beitrag · Runde ${msg.round}</span>
+            <span class="muted-text num">${escapeHtml(metaParts.join(' · '))}</span>
+          </div>
+          <p class="debate-msg-text">${escapeHtml(msg.text || '(Audioaufnahme ohne Text)')}</p>
+        </div>`;
+    })
+    .join('');
+
+  threadEl.scrollTop = threadEl.scrollHeight;
+}
+
+function resetDiscussionWithTopic(topicIdx) {
+  if ('speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {
+      // ignore
+    }
+  }
+  const safeIdx = ((topicIdx % DISCUSSION_TOPICS.length) + DISCUSSION_TOPICS.length) % DISCUSSION_TOPICS.length;
+  discState.topicIdx = safeIdx;
+  const topic = DISCUSSION_TOPICS[safeIdx];
+  discState.history = [
+    {
+      role: 'moderator',
+      persona: discState.persona,
+      headLabel: `Einstiegsimpuls · ${DISCUSSION_PERSONAS[discState.persona]?.label || 'Moderator'}`,
+      text: topic.openingPrompt,
+      tip: 'Nenne klar deine Position in einem Satz, begründe mit einem konkreten Alltagsbeispiel und schließe mit einem „Wir“-Appell.',
+    },
+  ];
+  discState.userTurns = [];
+  discState.lastRec = null;
+
+  document.getElementById('discCatBadge').textContent = topic.category;
+  document.getElementById('discTopicTitle').textContent = topic.title;
+  document.getElementById('discTranscript').value = '';
+  document.getElementById('discTimer').textContent = '00:00';
+  document.getElementById('discSpeechNotice').classList.add('hidden');
+  document.getElementById('discSummaryCard').classList.add('hidden');
+  const ampelEl = document.getElementById('discAmpel');
+  if (ampelEl) {
+    ampelEl.classList.remove('speaking', 'pause', 'rushing');
+    ampelEl.querySelector('.ampel-text').textContent = 'Bereit';
+  }
+  renderDiscussionThread();
+}
+
+function initDiskussionView() {
+  const personaSelect = document.getElementById('discPersonaSelect');
+  const newTopicBtn = document.getElementById('discNewTopicBtn');
+  const speakToggle = document.getElementById('discSpeakToggle');
+  const startBtn = document.getElementById('discStartBtn');
+  const stopBtn = document.getElementById('discStopBtn');
+  const sendBtn = document.getElementById('discSendBtn');
+  const finishBtn = document.getElementById('discFinishBtn');
+  const transcriptEl = document.getElementById('discTranscript');
+  const noticeEl = document.getElementById('discSpeechNotice');
+  const ampelEl = document.getElementById('discAmpel');
+  const timerEl = document.getElementById('discTimer');
+  const threadEl = document.getElementById('discThread');
+
+  if (!personaSelect || !threadEl) return;
+
+  resetDiscussionWithTopic(0);
+
+  personaSelect.addEventListener('change', () => {
+    discState.persona = personaSelect.value;
+    if (discState.history.length === 1 && discState.userTurns.length === 0) {
+      discState.history[0].persona = discState.persona;
+      discState.history[0].headLabel = `Einstiegsimpuls · ${DISCUSSION_PERSONAS[discState.persona]?.label || 'Moderator'}`;
+      renderDiscussionThread();
+    }
+  });
+
+  newTopicBtn.addEventListener('click', () => {
+    if (discState.recorder?.isRecording || discState.submitting) return;
+    let nextIdx = Math.floor(Math.random() * DISCUSSION_TOPICS.length);
+    if (DISCUSSION_TOPICS.length > 1 && nextIdx === discState.topicIdx) {
+      nextIdx = (discState.topicIdx + 1) % DISCUSSION_TOPICS.length;
+    }
+    resetDiscussionWithTopic(nextIdx);
+  });
+
+  threadEl.addEventListener('click', (e) => {
+    const speakBtn = e.target.closest('[data-disc-speak]');
+    if (!speakBtn) return;
+    const msg = discState.history[Number(speakBtn.dataset.discSpeak)];
+    if (msg?.text) speakDebatePrompt(msg.text);
+  });
+
+  startBtn.addEventListener('click', async () => {
+    if (discState.submitting) return;
+    noticeEl.classList.add('hidden');
+    discState.lastRec = null;
+    transcriptEl.value = '';
+    timerEl.textContent = '00:00';
+
+    const rec = new SpeechStudioRecorder({
+      canvas: document.getElementById('discCanvas'),
+      onTranscript: (text) => {
+        transcriptEl.value = text;
+      },
+      onTick: ({ elapsed }) => {
+        timerEl.textContent = formatTime(elapsed);
+        const rms = rec.samples[rec.samples.length - 1]?.rms || 0;
+        updateAmpel(ampelEl, rms, rec.samples);
+      },
+      onSpeechError: (msg) => {
+        noticeEl.textContent = msg;
+        noticeEl.classList.remove('hidden');
+      },
+    });
+
+    try {
+      await rec.start();
+      discState.recorder = rec;
+      startBtn.classList.add('hidden');
+      stopBtn.classList.remove('hidden');
+    } catch (err) {
+      noticeEl.textContent = `${err.message} — Du kannst deine Antwort auch direkt ins Textfeld eintippen.`;
+      noticeEl.classList.remove('hidden');
+    }
+  });
+
+  const submitDiscussionTurn = async () => {
+    if (discState.submitting) return false;
+    discState.submitting = true;
+    stopBtn.disabled = true;
+    sendBtn.disabled = true;
+
+    try {
+      if (discState.recorder?.isRecording) {
+        ampelEl.classList.remove('speaking', 'pause', 'rushing');
+        ampelEl.querySelector('.ampel-text').textContent = 'Beende Aufnahme...';
+        discState.lastRec = await discState.recorder.stop();
+      }
+      startBtn.classList.remove('hidden');
+      stopBtn.classList.add('hidden');
+
+      if (discState.lastRec) {
+        ampelEl.querySelector('.ampel-text').textContent = 'Transkribiere Beitrag...';
+        await autoTranscribeIfNeeded(discState.lastRec, {
+          transcriptEl,
+          noticeEl,
+          statusBtn: sendBtn,
+        });
+      }
+
+      const text = transcriptEl.value.trim();
+      if (!text && (!discState.lastRec || discState.lastRec.durationSec < 1.5)) {
+        noticeEl.textContent =
+          'Bitte sprich mindestens 2 Sekunden ins Mikrofon oder schreibe deine Erwiderung ins Textfeld.';
+        noticeEl.classList.remove('hidden');
+        ampelEl.querySelector('.ampel-text').textContent = 'Bereit';
+        return false;
+      }
+
+      const rec = discState.lastRec;
+      const turnNumber = discState.userTurns.length + 1;
+      const analysis = analyzeSpeech({
+        text,
+        durationSec: rec?.durationSec || 0,
+        audioSamples: rec?.samples || [],
+        mode: 'diskussion',
+        hasTranscript: Boolean(text),
+      });
+
+      const turnData = {
+        round: turnNumber,
+        text,
+        durationSec: rec?.durationSec || 0,
+        samples: rec?.samples || [],
+        analysis,
+      };
+      discState.userTurns.push(turnData);
+      discState.history.push({
+        role: 'user',
+        round: turnNumber,
+        text,
+        analysis,
+      });
+
+      const topic = DISCUSSION_TOPICS[discState.topicIdx];
+      const reply = generateModeratorReply({
+        topic,
+        persona: discState.persona,
+        history: discState.history,
+        userText: text,
+        analysis,
+        turnIndex: turnNumber,
+      });
+
+      discState.history.push({
+        role: 'moderator',
+        persona: discState.persona,
+        headLabel: `Gegenfrage (Runde ${turnNumber}) · ${DISCUSSION_PERSONAS[discState.persona]?.label || 'Moderator'}`,
+        text: reply.text,
+        angle: reply.angle,
+        term: reply.term,
+        tip: reply.tip,
+        rhetoricHint: reply.rhetoricHint,
+      });
+
+      discState.lastRec = null;
+      transcriptEl.value = '';
+      timerEl.textContent = '00:00';
+      ampelEl.classList.remove('speaking', 'pause', 'rushing');
+      ampelEl.querySelector('.ampel-text').textContent = 'Bereit für nächste Runde';
+
+      renderDiscussionThread();
+
+      if (speakToggle?.checked) {
+        speakDebatePrompt(reply.text);
+      }
+      return true;
+    } catch (err) {
+      noticeEl.textContent = `Fehler beim Verarbeiten des Beitrags: ${err?.message || 'Unbekannter Fehler'}`;
+      noticeEl.classList.remove('hidden');
+      return false;
+    } finally {
+      discState.submitting = false;
+      stopBtn.disabled = false;
+      sendBtn.disabled = false;
+    }
+  };
+
+  stopBtn.addEventListener('click', submitDiscussionTurn);
+  sendBtn.addEventListener('click', submitDiscussionTurn);
+
+  finishBtn.addEventListener('click', async () => {
+    if (discState.recorder?.isRecording || transcriptEl.value.trim()) {
+      await submitDiscussionTurn();
+    }
+    if (!discState.userTurns.length) {
+      noticeEl.textContent = 'Führe zuerst mindestens eine Diskussionsrunde, bevor du die Gesamtauswertung speicherst.';
+      noticeEl.classList.remove('hidden');
+      return;
+    }
+
+    const topic = DISCUSSION_TOPICS[discState.topicIdx];
+    const combinedText = discState.userTurns.map((t) => t.text).filter(Boolean).join('\n\n');
+    let timeOffset = 0;
+    const combinedSamples = [];
+    let totalDurationSec = 0;
+    for (const t of discState.userTurns) {
+      if (Array.isArray(t.samples) && t.samples.length) {
+        for (const s of t.samples) {
+          combinedSamples.push({ ...s, t: Number((timeOffset + Number(s.t || 0)).toFixed(2)) });
+        }
+        const turnSpan = t.durationSec > 0 ? t.durationSec : Number(t.samples[t.samples.length - 1]?.t || 0);
+        timeOffset += turnSpan + 0.2;
+      }
+      totalDurationSec += Number(t.durationSec || 0);
+    }
+
+    const overallAnalysis = analyzeSpeech({
+      text: combinedText,
+      durationSec: Number(totalDurationSec.toFixed(1)),
+      audioSamples: combinedSamples,
+      mode: 'diskussion',
+      hasTranscript: Boolean(combinedText.trim()),
+    });
+
+    const summaryCard = document.getElementById('discSummaryCard');
+    renderAnalysisCard(
+      summaryCard,
+      `Live-Diskussion (${discState.userTurns.length} Runden): ${topic.title}`,
+      overallAnalysis
+    );
+    summaryCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    const formattedTranscript = discState.history
+      .map((m) => (m.role === 'moderator' ? `[${m.headLabel || 'Moderator'}] ${m.text}` : `[Du · Runde ${m.round}] ${m.text}`))
+      .join('\n\n');
+
+    await saveSession({
+      type: 'diskussion',
+      title: `Diskussion (${discState.userTurns.length} R.): ${topic.title}`,
+      analysis: overallAnalysis,
+      transcript: formattedTranscript,
+    });
+  });
+}
+
 // ================= MODULE 6: PLAYBOOK =================
 function renderPlaybook() {
   document.getElementById('playbookGrid').innerHTML = PLAYBOOK_PILLARS.map(
@@ -2517,6 +2934,8 @@ function isAnyRecordingActive() {
       spontanRecorder?.isRecording ||
       tpRecorder?.isRecording ||
       wcState.recorder?.isRecording ||
+      window.__oratorActiveGwRec?.isRecording ||
+      discState.recorder?.isRecording ||
       lektionenState.lessonRecorder?.isRecording ||
       lektionenState.testRecorder?.isRecording
   );
@@ -2595,6 +3014,7 @@ async function bootstrap() {
   initTeleprompterView();
   initWordChallengeView();
   initDrillsView();
+  initDiskussionView();
   renderPlaybook();
   initExportReport();
   updateTopbarAndNav();
