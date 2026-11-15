@@ -27,6 +27,11 @@ import {
   generateModeratorReply,
 } from './discussion.js';
 import { icon } from './icons.js';
+import {
+  computeTeleprompterPxPerSec,
+  countSpokenWords,
+  formatCuedSpeechHtml,
+} from './teleprompter.js';
 
 const VIEW_HEADERS = {
   eingangstest: [
@@ -281,17 +286,6 @@ function formatTime(sec) {
   const mm = String(Math.floor(s / 60)).padStart(2, '0');
   const ss = String(s % 60).padStart(2, '0');
   return `${mm}:${ss}`;
-}
-
-function formatCuedSpeechHtml(text) {
-  return String(text || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\[PAUSE([^\]]*)\]/gi, '<span class="cue-pause">PAUSE$1</span>')
-    .replace(/\[CRESCENDO\]/gi, '<span class="cue-crescendo">CRESCENDO</span>')
-    .replace(/\[BETONUNG\]\s*([\wäöüß-]+)/gi, '<span class="cue-emphasis">$1</span>')
-    .replace(/\[RUHIGER\]/gi, '<span class="cue-calm">Ruhig und tief einsteigen</span>');
 }
 
 function updateAmpel(ampelEl, rms, activeSamples = []) {
@@ -1177,6 +1171,58 @@ let tpIsScrolling = false;
 let tpRecorder = null;
 let tpLastTimestamp = 0;
 let tpScrollPos = 0;
+let tpSpeechWordCount = 0;
+let tpPauseRemaining = 0;
+let tpActivePauseEl = null;
+const tpTriggeredPauses = new Set();
+
+function clearActivePauseVisual() {
+  if (tpActivePauseEl) {
+    tpActivePauseEl.classList.remove('is-pausing');
+    if (tpActivePauseEl.dataset.pauseLabel) {
+      tpActivePauseEl.textContent = tpActivePauseEl.dataset.pauseLabel;
+    }
+    tpActivePauseEl = null;
+  }
+  const focusLine = document.getElementById('tpFocusLine');
+  const indicator = document.getElementById('tpPauseIndicator');
+  focusLine?.classList.remove('is-pausing');
+  if (indicator) {
+    indicator.classList.add('hidden');
+    indicator.textContent = '';
+  }
+}
+
+function resetTeleprompterPauseState({ clearTriggered = true } = {}) {
+  tpPauseRemaining = 0;
+  clearActivePauseVisual();
+  if (clearTriggered) {
+    tpTriggeredPauses.clear();
+    document.querySelectorAll('#tpScrollContent .cue-pause').forEach((el) => {
+      el.classList.remove('is-pausing', 'is-done');
+      if (el.dataset.pauseLabel) el.textContent = el.dataset.pauseLabel;
+    });
+  }
+}
+
+function syncTeleprompterPauseMarkers() {
+  const focusLine = document.getElementById('tpFocusLine');
+  if (!focusLine) return;
+  const focusRect = focusLine.getBoundingClientRect();
+  document.querySelectorAll('#tpScrollContent .cue-pause').forEach((el) => {
+    if (el === tpActivePauseEl) return;
+    const r = el.getBoundingClientRect();
+    const centerY = r.top + r.height / 2;
+    if (centerY < focusRect.top - 16) {
+      tpTriggeredPauses.add(el);
+      el.classList.add('is-done');
+    } else if (centerY > focusRect.bottom + 16) {
+      tpTriggeredPauses.delete(el);
+      el.classList.remove('is-done');
+      if (el.dataset.pauseLabel) el.textContent = el.dataset.pauseLabel;
+    }
+  });
+}
 
 function getAllSpeeches() {
   return [...appState.customSpeeches, ...TELEPROMPTER_SPEECHES];
@@ -1202,9 +1248,12 @@ function populateSpeechSelect(selectedId = null) {
 function loadSelectedSpeechIntoPrompter() {
   const speech = getSelectedSpeech();
   document.getElementById('tpTechniqueBadge').textContent = speech.technique;
-  document.getElementById('tpScrollContent').innerHTML = formatCuedSpeechHtml(speech.text);
+  const content = document.getElementById('tpScrollContent');
+  content.innerHTML = `<div class="tp-speech-body">${formatCuedSpeechHtml(speech.text)}</div>`;
+  tpSpeechWordCount = countSpokenWords(speech.text);
   tpScrollPos = 0;
-  document.getElementById('tpScrollContent').scrollTop = 0;
+  content.scrollTop = 0;
+  resetTeleprompterPauseState({ clearTriggered: true });
   if (speech.targetWpm) {
     document.getElementById('tpWpmSlider').value = speech.targetWpm;
     document.getElementById('tpWpmLabel').textContent = speech.targetWpm;
@@ -1218,9 +1267,63 @@ function stepTeleprompterScroll(ts) {
   const dt = Math.min(0.1, (ts - tpLastTimestamp) / 1000);
   tpLastTimestamp = ts;
 
+  const honorPauses = document.getElementById('tpHonorPausesCheck')?.checked !== false;
+  const focusLine = document.getElementById('tpFocusLine');
+  const indicator = document.getElementById('tpPauseIndicator');
+
+  if (tpPauseRemaining > 0 && honorPauses) {
+    tpPauseRemaining = Math.max(0, tpPauseRemaining - dt);
+    if (tpPauseRemaining > 0) {
+      const countdown = tpPauseRemaining.toFixed(1);
+      if (tpActivePauseEl) tpActivePauseEl.textContent = `PAUSE · ${countdown}s`;
+      if (indicator) indicator.textContent = `PAUSE · ${countdown}s`;
+      tpScrollRaf = requestAnimationFrame(stepTeleprompterScroll);
+      return;
+    }
+    if (tpActivePauseEl) tpActivePauseEl.classList.add('is-done');
+    clearActivePauseVisual();
+  } else if (tpPauseRemaining > 0 && !honorPauses) {
+    tpPauseRemaining = 0;
+    clearActivePauseVisual();
+  }
+
+  if (honorPauses && focusLine) {
+    const focusRect = focusLine.getBoundingClientRect();
+    const focusCenterY = focusRect.top + focusRect.height * 0.52;
+    const cues = content.querySelectorAll('.cue-pause');
+    for (const cue of cues) {
+      if (tpTriggeredPauses.has(cue)) continue;
+      const cueRect = cue.getBoundingClientRect();
+      const cueCenterY = cueRect.top + cueRect.height / 2;
+      if (cueCenterY <= focusCenterY && cueCenterY >= focusRect.top - 24) {
+        const pauseSec = Number(cue.dataset.pauseSec) || 1.2;
+        tpTriggeredPauses.add(cue);
+        tpPauseRemaining = pauseSec;
+        tpActivePauseEl = cue;
+        cue.classList.add('is-pausing');
+        cue.textContent = `PAUSE · ${pauseSec.toFixed(1)}s`;
+        focusLine.classList.add('is-pausing');
+        if (indicator) {
+          indicator.textContent = `PAUSE · ${pauseSec.toFixed(1)}s`;
+          indicator.classList.remove('hidden');
+        }
+        tpScrollRaf = requestAnimationFrame(stepTeleprompterScroll);
+        return;
+      }
+    }
+  }
+
   const wpm = Number(document.getElementById('tpWpmSlider').value);
   const fontSize = Number(document.getElementById('tpFontSlider').value);
-  const pxPerSec = (wpm / 125) * (fontSize * 1.15);
+  const bodyEl = content.querySelector('.tp-speech-body');
+  const textHeightPx = bodyEl ? bodyEl.offsetHeight : 0;
+  const pxPerSec = computeTeleprompterPxPerSec({
+    wpm,
+    wordCount: tpSpeechWordCount,
+    textHeightPx,
+    fontSizePx: fontSize,
+  });
+
   tpScrollPos += pxPerSec * dt;
   content.scrollTop = tpScrollPos;
 
@@ -1228,6 +1331,7 @@ function stepTeleprompterScroll(ts) {
     tpScrollRaf = requestAnimationFrame(stepTeleprompterScroll);
   } else {
     tpIsScrolling = false;
+    resetTeleprompterPauseState({ clearTriggered: false });
   }
 }
 
@@ -1252,6 +1356,13 @@ function initTeleprompterView() {
   fontSlider.addEventListener('input', () => {
     document.getElementById('tpFontLabel').textContent = fontSlider.value;
     document.getElementById('tpScrollContent').style.fontSize = `${fontSlider.value}px`;
+  });
+
+  document.getElementById('tpHonorPausesCheck')?.addEventListener('change', (e) => {
+    if (!e.target.checked) {
+      tpPauseRemaining = 0;
+      clearActivePauseVisual();
+    }
   });
 
   document.getElementById('tpMirrorCheck').addEventListener('change', (e) => {
@@ -1301,6 +1412,7 @@ function initTeleprompterView() {
   playBtn.addEventListener('click', async () => {
     tpNoticeEl.classList.add('hidden');
     tpScrollPos = document.getElementById('tpScrollContent').scrollTop;
+    syncTeleprompterPauseMarkers();
     tpIsScrolling = true;
     tpLastTimestamp = 0;
     tpScrollRaf = requestAnimationFrame(stepTeleprompterScroll);
@@ -1343,6 +1455,7 @@ function initTeleprompterView() {
     cancelAnimationFrame(tpScrollRaf);
     tpScrollPos = 0;
     document.getElementById('tpScrollContent').scrollTop = 0;
+    resetTeleprompterPauseState({ clearTriggered: true });
     playBtn.classList.remove('hidden');
     playBtn.innerHTML = `${icon('play', 15)} <span>Prompter + Aufnahme starten</span>`;
     pauseBtn.classList.add('hidden');
@@ -1351,6 +1464,7 @@ function initTeleprompterView() {
   stopBtn.addEventListener('click', async () => {
     tpIsScrolling = false;
     cancelAnimationFrame(tpScrollRaf);
+    resetTeleprompterPauseState({ clearTriggered: true });
     playBtn.classList.remove('hidden');
     playBtn.innerHTML = `${icon('play', 15)} <span>Prompter + Aufnahme starten</span>`;
     pauseBtn.classList.add('hidden');

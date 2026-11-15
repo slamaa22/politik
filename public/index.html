@@ -580,6 +580,10 @@
               <input type="range" id="tpFontSlider" min="20" max="44" value="28" />
             </label>
             <label class="checkbox-label">
+              <input type="checkbox" id="tpHonorPausesCheck" checked />
+              <span>Pausen abwarten</span>
+            </label>
+            <label class="checkbox-label">
               <input type="checkbox" id="tpMirrorCheck" />
               <span>Spiegeln</span>
             </label>
@@ -590,7 +594,9 @@
           </div>
 
           <div id="tpStage" class="teleprompter-stage">
-            <div class="tp-focus-line" aria-hidden="true"></div>
+            <div id="tpFocusLine" class="tp-focus-line" aria-hidden="true">
+              <span id="tpPauseIndicator" class="tp-pause-indicator hidden num"></span>
+            </div>
             <div id="tpScrollContent" class="tp-scroll-content"></div>
           </div>
 
