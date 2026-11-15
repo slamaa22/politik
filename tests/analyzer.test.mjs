@@ -127,3 +127,91 @@ test('scores Obama-style speech higher than filler-heavy speech and generates 3-
   assert.equal(plan.length, 3);
   assert.equal(plan[0].priority, 1);
 });
+
+test('teleprompter mode evaluates delivery without Ich/Wir or Stilmittel penalties and preserves speaking WPM', () => {
+  // 140 words from "Hoffnung ist kein naives Wort" (has 9x Ich, 3x Wir)
+  const script = `
+    Kritiker sagen manchmal, wer von Hoffnung spricht, sei naiv. [PAUSE 1.5s]
+    Als hätten wir nicht erlebt, wie schwer Krisen wiegen. Als wüssten wir nicht, wie müde viele Menschen nach den letzten Jahren sind. [PAUSE 1.2s]
+    Aber verstehen Sie mich nicht falsch: [PAUSE 1.0s]
+    Hoffnung ist keine blinde Verharmlosung.
+    Hoffnung ist keine Ausrede für Wegsehen.
+    Hoffnung ist die [BETONUNG] Entschlossenheit, angesichts schwieriger Zeiten nicht zu kapitulieren. [PAUSE 1.5s]
+    [CRESCENDO] Hoffnung ist der Handwerker, der morgens um sechs seinen Betrieb aufschließt.
+    Hoffnung ist die Lehrerin, die nach Feierabend noch für ein Kind Zeit findet.
+    Hoffnung ist jeder Mensch hier im Saal, der sagt: Ich meckere nicht nur, ich übernehme Verantwortung. [PAUSE 1.5s]
+    Wenn Sie mir Ihr Vertrauen schenken, verspreche ich Ihnen keine Wunder über Nacht.
+    Aber ich verspreche Ihnen eines: [PAUSE 1.2s]
+    Ich werde Sie nie vergessen. Ich werde Ihnen immer reinen Wein einschenken. Und ich werde jeden Tag für unsere gemeinsame Chance kämpfen.
+  `;
+  const transcript = script.replace(/\[[^\]]+\]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // Simulate 84s recording: ~68s speaking (at ~123 WPM) + ~16s of deliberate pauses (4 pauses x 4s? Better: 10 pauses x 1.6s)
+  const samples = [];
+  for (let i = 0; i < 840; i++) {
+    const t = Number((i * 0.1).toFixed(1));
+    const block = i % 84;
+    // 1.6s pause every 8.4s -> 10 pauses totaling 16s (~19% pauseRatio), plus loud emphasis peak
+    const isPause = block >= 68;
+    const isPeak = !isPause && block % 25 === 0;
+    samples.push({
+      t,
+      rms: isPause ? 0.004 : isPeak ? 0.48 : 0.06,
+      pitchHz: isPause ? null : block % 20 < 14 ? 148 : 118,
+    });
+  }
+
+  const res = analyzeSpeech({
+    text: transcript,
+    durationSec: 84,
+    audioSamples: samples,
+    mode: 'teleprompter',
+    referenceText: script,
+    hasTranscript: true,
+  });
+
+  assert.deepEqual(res.applicableDimensions, ['tempo', 'pausen', 'dynamik', 'klarheit']);
+  assert.ok(res.wpm >= 115 && res.wpm <= 135, `speaking WPM should stay in sweetspot, got ${res.wpm}`);
+  assert.ok(res.audio.pauseRatio < 28, `loud spike must not inflate pauseRatio, got ${res.audio.pauseRatio}`);
+  assert.ok(res.scriptMatchRatio >= 95, `expected high scriptMatchRatio, got ${res.scriptMatchRatio}`);
+  assert.ok(res.obamaIndex >= 85, `expected >= 85 delivery score, got ${res.obamaIndex}`);
+
+  const allFeedback = [...res.feedback.strengths, ...res.feedback.improvements].join(' ');
+  assert.equal(allFeedback.includes('Zu viel „Ich“'), false, 'must not penalize Ich in scripted speech');
+  assert.equal(allFeedback.includes('„Ich“-Fokus'), false, 'must not penalize Ich-Fokus in scripted speech');
+  assert.equal(allFeedback.includes('Dreiklang'), false, 'must not critique author figures in teleprompter');
+  assert.equal(allFeedback.includes('Kontrast-Brücke'), false, 'must not critique author figures in teleprompter');
+});
+
+test('pitch analysis filters out isolated octave-jump outliers', () => {
+  const samples = [];
+  for (let i = 0; i < 60; i++) {
+    let pitchHz = 140 + (i % 10) * 3; // natural ~3.5 semitone range (140..167 Hz)
+    if (i === 12 || i === 37) pitchHz = 72; // octave-down glitch
+    if (i === 25 || i === 48) pitchHz = 310; // octave-up glitch
+    samples.push({ t: i * 0.1, rms: 0.08, pitchHz });
+  }
+  const audio = analyzeAudioSamples(samples, 6.0);
+  assert.equal(audio.hasPitch, true);
+  assert.ok(audio.pitchRangeSemitones < 6.0, `outliers should be filtered out, got ${audio.pitchRangeSemitones}`);
+});
+
+test('detects cross-sentence German contrasts and scopes pause-drill/stilmittel modes', () => {
+  const devices = detectRhetoricalDevices(
+    'Hoffnung ist keine blinde Verharmlosung. Hoffnung ist die Entschlossenheit zum Handeln.'
+  );
+  assert.ok(devices.contrasts.length >= 1, 'should detect definition contrast across sentences');
+
+  const pauseOnly = analyzeSpeech({
+    text: 'Ich spreche heute über unser Viertel.',
+    durationSec: 12,
+    audioSamples: Array.from({ length: 120 }, (_, i) => ({
+      t: i * 0.1,
+      rms: i >= 30 && i < 45 ? 0.003 : i >= 75 && i < 90 ? 0.003 : 0.08,
+    })),
+    mode: 'pause-drill',
+  });
+  assert.deepEqual(pauseOnly.applicableDimensions, ['pausen']);
+  assert.equal(pauseOnly.obamaIndex, pauseOnly.dimensions.pausen);
+});
+

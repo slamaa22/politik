@@ -370,8 +370,15 @@ export function createAppServer({
       }
 
       if (pathname.startsWith('/api/sessions/') && req.method === 'DELETE') {
-        const id = pathname.slice('/api/sessions/'.length);
+        const id = decodeURIComponent(pathname.slice('/api/sessions/'.length));
         const state = await readState(dataFile);
+        const target = state.sessions.find((s) => s.id === id);
+        if (target?.audioUrl && target.audioUrl.startsWith('/api/audio/')) {
+          const rawName = path.basename(target.audioUrl.slice('/api/audio/'.length));
+          if (/^rec_[a-z0-9_]+\.(webm|ogg|mp4|m4a|wav)$/i.test(rawName)) {
+            await fs.rm(path.join(audioDir, rawName), { force: true }).catch(() => {});
+          }
+        }
         state.sessions = state.sessions.filter((s) => s.id !== id);
         const saved = await writeState(dataFile, state);
         return sendJson(res, 200, saved);
@@ -415,6 +422,19 @@ export function createAppServer({
         if (body.scope === 'all') {
           await fs.rm(audioDir, { recursive: true, force: true }).catch(() => {});
           const saved = await writeState(dataFile, structuredClone(DEFAULT_STATE));
+          return sendJson(res, 200, saved);
+        }
+        if (body.scope === 'sessions') {
+          for (const s of state.sessions) {
+            if (s?.audioUrl && s.audioUrl.startsWith('/api/audio/')) {
+              const rawName = path.basename(s.audioUrl.slice('/api/audio/'.length));
+              if (/^rec_[a-z0-9_]+\.(webm|ogg|mp4|m4a|wav)$/i.test(rawName)) {
+                await fs.rm(path.join(audioDir, rawName), { force: true }).catch(() => {});
+              }
+            }
+          }
+          state.sessions = [];
+          const saved = await writeState(dataFile, state);
           return sendJson(res, 200, saved);
         }
         state.baseline = null;

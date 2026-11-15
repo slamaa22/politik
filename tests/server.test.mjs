@@ -89,13 +89,43 @@ test('HTTP server serves static app and persists baseline, sessions, speeches, a
     }).then((r) => r.json());
     assert.equal(baseRes.baseline.obamaIndex, 64);
 
-    // 7. Save session & custom speech
+    // 7. Save session, verify DELETE cleans up session & audio, and test scope='sessions' reset preserves baseline
+    const sessAudioUp = await fetch(`${baseUrl}/api/audio`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'audio/webm' },
+      body: Buffer.from('SESSION_AUDIO_BYTES'),
+    }).then((r) => r.json());
     const sessRes = await fetch(`${baseUrl}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'spontanrede', title: 'Test-Spontanrede', analysis: { obamaIndex: 72 } }),
+      body: JSON.stringify({
+        id: 'sess_del_test',
+        type: 'teleprompter',
+        title: 'Test-Ablesen',
+        audioUrl: sessAudioUp.audioUrl,
+        analysis: { obamaIndex: 82 },
+      }),
     }).then((r) => r.json());
     assert.equal(sessRes.state.sessions.length, 1);
+
+    const delRes = await fetch(`${baseUrl}/api/sessions/sess_del_test`, { method: 'DELETE' }).then((r) => r.json());
+    assert.equal(delRes.sessions.length, 0);
+    const deletedAudioGet = await fetch(`${baseUrl}${sessAudioUp.audioUrl}`);
+    assert.equal(deletedAudioGet.status, 404);
+
+    // Re-add session and reset only sessions -> baseline stays intact
+    await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'sess_keep_base', type: 'spontanrede', analysis: { obamaIndex: 74 } }),
+    });
+    const resetSessRes = await fetch(`${baseUrl}/api/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: 'sessions' }),
+    }).then((r) => r.json());
+    assert.equal(resetSessRes.sessions.length, 0);
+    assert.equal(resetSessRes.baseline.obamaIndex, 64);
 
     const speechRes = await fetch(`${baseUrl}/api/speeches`, {
       method: 'POST',

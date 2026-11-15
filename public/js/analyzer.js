@@ -79,6 +79,17 @@ export const VALUES_VOCAB = new Set([
   'glaube',
   'glauben',
   'versprechen',
+  'lösung',
+  'lösungen',
+  'bildung',
+  'familie',
+  'familien',
+  'sicherheit',
+  'alltag',
+  'entschlossenheit',
+  'besonnenheit',
+  'verlässlichkeit',
+  'chancengleichheit',
 ]);
 
 export function cleanTeleprompterCues(text) {
@@ -107,6 +118,35 @@ export function splitSentences(text) {
 
 function clamp(val, min = 0, max = 100) {
   return Math.max(min, Math.min(max, Math.round(val)));
+}
+
+export function computeScriptMatchRatio(spokenText, referenceText) {
+  const refWords = tokenizeWords(referenceText);
+  const spokenWords = tokenizeWords(spokenText);
+  if (!refWords.length || !spokenWords.length) return null;
+
+  const spokenCounts = new Map();
+  for (const w of spokenWords) {
+    spokenCounts.set(w, (spokenCounts.get(w) || 0) + 1);
+  }
+  const spokenJoined = spokenWords.join('');
+
+  let matched = 0;
+  for (const rw of refWords) {
+    const avail = spokenCounts.get(rw) || 0;
+    if (avail > 0) {
+      matched++;
+      spokenCounts.set(rw, avail - 1);
+    } else if (rw.length >= 4 && spokenJoined.includes(rw)) {
+      // Handles German compound splitting/joining by STT (e.g. "tiefgespalten" vs "tief gespalten")
+      matched += 0.85;
+    }
+  }
+
+  const recall = matched / refWords.length;
+  const precision = Math.min(1, matched / spokenWords.length);
+  const f1 = recall + precision > 0 ? (2 * recall * precision) / (recall + precision) : 0;
+  return clamp(f1 * 100, 0, 100);
 }
 
 export function detectFillers(text) {
@@ -143,13 +183,17 @@ export function detectRhetoricalDevices(text) {
   const sentences = splitSentences(text);
   const cleaned = cleanTeleprompterCues(text);
 
-  // 1. Contrasts / Antithesis
+  // 1. Contrasts / Antithesis (within sentence and across adjacent sentences)
   const contrastPatterns = [
-    /\bnicht\b[^.!?]{2,60}\bsondern\b/gi,
-    /\bkein(?:e|en|em|er|es)?\b[^.!?]{2,60}\bsondern\b/gi,
-    /\bes geht nicht um\b[^.!?]{2,70}\bes geht um\b/gi,
+    /\bnicht\b[^.!?]{2,70}\bsondern\b/gi,
+    /\bnicht\b[^.!?]{2,70}[.!?]\s*\bsondern\b/gi,
+    /\bkein(?:e|en|em|er|es)?\b[^.!?]{2,70}\b(?:sondern|gegen)\b/gi,
+    /\bkein(?:e|en|em|er|es)?\b[^.!?]{2,70}[.!?]\s*\b(?:sondern|aber|doch)\b/gi,
+    /\bes geht nicht um\b[^.!?]{2,70}[.!?]?\s*\b(?:es geht um|sondern)\b/gi,
     /\bwährend\b[^.!?]{4,60},/gi,
     /\bstatt\b[^.!?]{3,50}\b(?:zu|werden|wollen|müssen)\b/gi,
+    /\b[\wäöüß-]+\s+(?:ist|sind|bedeutet|heißt)\s+kein(?:e|en|em|er|es)?\b[^.!?]{2,70}[.!?]\s*[\wäöüß-]+\s+(?:ist|sind|bedeutet|heißt)\b/gi,
+    /\bwollen\s+keine\b[^.!?]{2,70}[.!?]\s*(?:wir\s+)?wollen\b/gi,
   ];
   const contrastMatches = [];
   for (const re of contrastPatterns) {
@@ -271,7 +315,7 @@ export function detectPitchHz(buffer, sampleRate = 44100) {
         bestTau = tau;
       }
     }
-    if (minVal > 0.28) return null;
+    if (minVal > 0.22) return null;
   }
 
   if (bestTau <= 0) return null;
@@ -300,6 +344,8 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
   const emptyAudio = {
     hasAudio: false,
     durationSec: Number(durationSec || 0),
+    activeDurationSec: 0,
+    speakingDurationSec: 0,
     strategicPauses: 0,
     pauseRatio: 0,
     avgPauseSec: 0,
@@ -324,9 +370,9 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
 
   const rmsValues = samples.map((s) => Number(s.rms || 0));
   const sorted = [...rmsValues].sort((a, b) => a - b);
-  const noiseFloor = sorted[Math.floor(sorted.length * 0.15)] || 0.005;
-  const peak = sorted[Math.floor(sorted.length * 0.95)] || 0.05;
-  const speechThreshold = Math.max(0.012, noiseFloor * 2.2, peak * 0.16);
+  // Anchor silence threshold to room noise floor, decoupled from loud emphasis peaks
+  const noiseFloor = sorted[Math.floor(sorted.length * 0.08)] || 0.004;
+  const speechThreshold = Math.min(0.032, Math.max(0.009, noiseFloor * 2.2));
 
   // Trim leading and trailing silence for fair pause ratio
   const firstActive = samples.findIndex((s) => s.rms >= speechThreshold);
@@ -359,18 +405,28 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
       if (silenceStart === null) silenceStart = sample.t;
     } else if (silenceStart !== null) {
       const pauseLen = sample.t - silenceStart;
-      if (pauseLen >= 0.45 && pauseLen <= 4.0) {
+      if (pauseLen >= 0.55 && pauseLen <= 4.0) {
         pauseDurations.push(pauseLen);
       }
       silenceStart = null;
     }
   }
 
+  const totalPauseSec = pauseDurations.reduce((a, b) => a + b, 0);
+  const activeDurationSec =
+    activeSlice.length > 1
+      ? Math.max(0, Number(activeSlice[activeSlice.length - 1].t || 0) - Number(activeSlice[0].t || 0))
+      : Number(durationSec || 0);
+  const effectiveDuration = activeDurationSec > 1 ? activeDurationSec : Number(durationSec || 0);
+  const speakingDurationSec = Number(
+    Math.max(effectiveDuration * 0.4, effectiveDuration - totalPauseSec).toFixed(1)
+  );
+
   const pauseRatio = activeSlice.length > 0 ? silentSamples / activeSlice.length : 0;
   const strategicPauses = pauseDurations.length;
   const avgPauseSec =
     strategicPauses > 0
-      ? Number((pauseDurations.reduce((a, b) => a + b, 0) / strategicPauses).toFixed(2))
+      ? Number((totalPauseSec / strategicPauses).toFixed(2))
       : 0;
 
   // Volume presence & dynamic range on speaking frames
@@ -393,11 +449,11 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
   if (meanRms < 0.022) volumeLevel = 'zu leise';
   else if (meanRms > 0.36 || clippedRatio > 8) volumeLevel = 'übersteuert';
 
-  // Count distinct emphasis volume peaks separated by >= 0.8s
+  // Count distinct emphasis volume peaks separated by >= 1.2s
   let emphasisPeaks = 0;
   let lastPeakTime = -10;
   for (const s of speakingFrames) {
-    if (s.rms >= meanRms * 1.42 && s.t - lastPeakTime >= 0.8) {
+    if (s.rms >= meanRms * 1.55 && s.t - lastPeakTime >= 1.2) {
       emphasisPeaks++;
       lastPeakTime = s.t;
     }
@@ -412,7 +468,7 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
   const endAvg = end.length > 0 ? end.reduce((a, b) => a + b, 0) / end.length : meanRms;
   const crescendoDelta = midAvg > 0 ? Number(((endAvg - midAvg) / midAvg).toFixed(2)) : 0;
 
-  // Pitch / Tonfall analysis
+  // Pitch / Tonfall analysis with octave-jump outlier filtering
   const validPitches = speakingFrames
     .map((s) => Number(s.pitchHz))
     .filter((hz) => Number.isFinite(hz) && hz >= 70 && hz <= 360);
@@ -425,8 +481,20 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
   let authorityCadenceRatio = null;
 
   if (validPitches.length >= 6) {
+    const rawMedian = median(validPitches);
+    const minModal = rawMedian * 0.62;
+    const maxModal = rawMedian * 1.65;
+    const inBand = validPitches.filter((hz) => hz >= minModal && hz <= maxModal);
+    const cleanPitches = inBand.length >= 6 ? inBand : validPitches;
+
+    // 3-point median smoother removes isolated frame glitches before p10/p90
+    const smoothedPitches = cleanPitches.map((hz, idx, arr) => {
+      if (idx === 0 || idx === arr.length - 1) return hz;
+      return median([arr[idx - 1], hz, arr[idx + 1]]);
+    });
+
     hasPitch = true;
-    const sortedP = [...validPitches].sort((a, b) => a - b);
+    const sortedP = [...smoothedPitches].sort((a, b) => a - b);
     const p10 = sortedP[Math.floor(sortedP.length * 0.1)];
     const p90 = sortedP[Math.floor(sortedP.length * 0.9)];
     medianPitchHz = Number(median(sortedP).toFixed(1));
@@ -445,7 +513,7 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
           currentUtt = [];
         }
         gapStart = null;
-        if (sample.pitchHz >= 70 && sample.pitchHz <= 360) {
+        if (sample.pitchHz >= minModal && sample.pitchHz <= maxModal) {
           currentUtt.push(sample.pitchHz);
         }
       } else if (gapStart === null) {
@@ -475,6 +543,8 @@ export function analyzeAudioSamples(samples = [], durationSec = 0) {
   return {
     hasAudio: true,
     durationSec: Number(durationSec.toFixed(1)),
+    activeDurationSec: Number(activeDurationSec.toFixed(1)),
+    speakingDurationSec,
     strategicPauses,
     pauseRatio: Number((pauseRatio * 100).toFixed(1)),
     avgPauseSec,
@@ -513,13 +583,48 @@ export function matchMandatoryWords(text, mandatoryWords = []) {
   });
 }
 
+export const DIMENSION_WEIGHTS = {
+  tempo: 0.16,
+  pausen: 0.2,
+  dynamik: 0.14,
+  stilmittel: 0.18,
+  wirCharisma: 0.18,
+  klarheit: 0.14,
+};
+
+export function getApplicableDimensions(mode = 'general', { hasAudio = false, durationSec = 0 } = {}) {
+  if (mode === 'teleprompter' || mode === 'lesen') {
+    return ['tempo', 'pausen', 'dynamik', 'klarheit'];
+  }
+  if (mode === 'pause-drill' || mode === 'pausen-drill') {
+    return ['pausen'];
+  }
+  if (mode === 'stilmittel') {
+    return ['stilmittel', 'klarheit'];
+  }
+  if (mode === 'storytelling') {
+    return ['stilmittel', 'wirCharisma', 'klarheit'];
+  }
+  if (!hasAudio && durationSec < 5) {
+    return ['stilmittel', 'wirCharisma', 'klarheit'];
+  }
+  return ['tempo', 'pausen', 'dynamik', 'stilmittel', 'wirCharisma', 'klarheit'];
+}
+
 export function analyzeSpeech({
   text = '',
   durationSec = 0,
   audioSamples = [],
   mandatoryWords = [],
   mode = 'general',
+  referenceText = null,
+  hasTranscript = null,
 } = {}) {
+  const isScripted = mode === 'teleprompter' || mode === 'lesen';
+  const isPauseDrill = mode === 'pause-drill' || mode === 'pausen-drill';
+  const isStyleDrill = mode === 'stilmittel';
+  const isStorytelling = mode === 'storytelling';
+
   const words = tokenizeWords(text);
   const wordCount = words.length;
   const sentences = splitSentences(text);
@@ -561,11 +666,26 @@ export function analyzeSpeech({
   // Audio metrics
   const audio = analyzeAudioSamples(audioSamples, durationSec);
 
-  // WPM calculation
-  let wpm = null;
-  if (durationSec >= 5 && wordCount >= 8) {
-    wpm = Math.round((wordCount / durationSec) * 60);
-  }
+  // Script fidelity for Teleprompter / Ablesen
+  const transcriptProvided = hasTranscript !== null ? Boolean(hasTranscript) : Boolean(referenceText && text.trim());
+  const scriptMatchRatio =
+    isScripted && referenceText && transcriptProvided
+      ? computeScriptMatchRatio(text, referenceText)
+      : null;
+
+  // WPM calculation: use active speaking time (excluding deliberate strategic pauses) when audio pauses are detected
+  const rawWpm =
+    durationSec >= 5 && wordCount >= 8 ? Math.round((wordCount / durationSec) * 60) : null;
+  const speakingWpm =
+    audio.hasAudio && audio.speakingDurationSec >= 5 && wordCount >= 8
+      ? Math.round((wordCount / audio.speakingDurationSec) * 60)
+      : null;
+  const wpm = speakingWpm && audio.strategicPauses >= 1 ? speakingWpm : rawWpm;
+
+  const applicableDimensions = getApplicableDimensions(mode, {
+    hasAudio: audio.hasAudio,
+    durationSec,
+  });
 
   // --- Dimension Scores (0 - 100) ---
 
@@ -573,11 +693,11 @@ export function analyzeSpeech({
   let tempoScore = 62;
   if (wpm !== null) {
     if (wpm >= 112 && wpm <= 138) {
-      tempoScore = 94 - Math.round(Math.abs(wpm - 125) * 0.4);
+      tempoScore = 95 - Math.round(Math.abs(wpm - 125) * 0.4);
     } else if (wpm > 138) {
       tempoScore = clamp(92 - (wpm - 138) * 1.15, 25, 90);
     } else {
-      tempoScore = clamp(90 - (112 - wpm) * 1.0, 30, 88);
+      tempoScore = clamp(90 - (112 - wpm) * 0.9, 30, 88);
     }
   } else if (wordCount >= 20) {
     // Text-only fallback uses sentence pacing balance
@@ -589,12 +709,14 @@ export function analyzeSpeech({
   if (audio.hasAudio && audio.durationSec >= 8) {
     const idealPauseBonus =
       audio.strategicPauses >= 3 ? 30 : audio.strategicPauses * 9;
-    // Ideal pause ratio 14% - 28%
-    let ratioScore = 25;
-    if (audio.pauseRatio >= 14 && audio.pauseRatio <= 28) ratioScore = 45;
-    else if (audio.pauseRatio >= 8 && audio.pauseRatio <= 35) ratioScore = 34;
+    const ratioMin = 12;
+    const ratioMax = isScripted || isPauseDrill ? 32 : 28;
+    let ratioScore = 24;
+    if (audio.pauseRatio >= ratioMin && audio.pauseRatio <= ratioMax) ratioScore = 45;
+    else if (audio.pauseRatio >= 8 && audio.pauseRatio <= 38) ratioScore = 36;
     else if (audio.pauseRatio < 5) ratioScore = 12;
-    const lenBonus = audio.avgPauseSec >= 0.7 && audio.avgPauseSec <= 2.2 ? 20 : audio.avgPauseSec > 0.4 ? 10 : 0;
+    else if (audio.pauseRatio > 42) ratioScore = 18;
+    const lenBonus = audio.avgPauseSec >= 0.7 && audio.avgPauseSec <= 2.3 ? 20 : audio.avgPauseSec > 0.4 ? 10 : 0;
     pausenScore = clamp(10 + idealPauseBonus + ratioScore + lenBonus);
   } else if (wordCount >= 15) {
     const pauseCues = (String(text).match(/[.!?—…]/g) || []).length;
@@ -605,13 +727,17 @@ export function analyzeSpeech({
   let dynamikScore = 58;
   if (audio.hasAudio && audio.durationSec >= 8) {
     const rangePts = clamp(audio.dynamicRange * 75, 6, 32);
-    const crescPts = audio.crescendoDelta > 0.05 ? 16 : audio.crescendoDelta > -0.05 ? 9 : 3;
+    let crescPts = 9;
+    if (audio.crescendoDelta >= 0.05) crescPts = 16;
+    else if (audio.crescendoDelta >= -0.07 && audio.dynamicRange >= 0.35) crescPts = 13;
+    else if (audio.crescendoDelta < -0.10) crescPts = 4;
+
     const volPts = audio.volumeLevel === 'präsent' ? 16 : audio.volumeLevel === 'zu leise' ? 4 : 9;
 
     let pitchPts = 14;
     if (audio.hasPitch) {
-      if (audio.pitchRangeSemitones >= 4.0 && audio.pitchRangeSemitones <= 10.0) pitchPts = 22;
-      else if (audio.pitchRangeSemitones >= 2.5) pitchPts = 14;
+      if (audio.pitchRangeSemitones >= 3.5 && audio.pitchRangeSemitones <= 11.5) pitchPts = 22;
+      else if (audio.pitchRangeSemitones >= 2.2) pitchPts = 14;
       else pitchPts = 6; // monotonous
 
       if (audio.authorityCadenceRatio !== null) {
@@ -634,15 +760,29 @@ export function analyzeSpeech({
   const stilmittelScore = wordCount > 0 ? clamp(28 + Math.min(72, devicePoints)) : 20;
 
   // 5. Wir-Charisma & Werte-Framing
-  const wePoints = weCount > 0 ? clamp((weRatio / 100) * 45, 5, 45) : 10;
-  const valuesPoints = Math.min(35, valuesHits.size * 9);
+  const wePoints =
+    weCount > 0
+      ? clamp((weRatio / 100) * 45, 8, 45)
+      : isStorytelling && iCount > 0
+        ? 18
+        : 10;
+  const valuesPoints = Math.min(35, valuesHits.size * 10);
   const directAddressBonus = words.some((w) => ['ihr', 'euch', 'eure', 'sie', 'ihnen'].includes(w)) ? 12 : 0;
   const wirCharismaScore = wordCount > 0 ? clamp(15 + wePoints + valuesPoints + directAddressBonus) : 20;
 
-  // 6. Klarheit & Kadenz
+  // 6. Klarheit & Kadenz (in Teleprompter/Ablesen: Texttreue + Füllwortfreiheit statt Autoren-Satzlänge)
   const fillerPenalty = fillers.ratePer100 * 8;
-  const rhythmBonus = (hasShortPunch ? 16 : 0) + (hasLongBuild ? 14 : 0) + Math.min(16, sentStdDev * 2.5);
-  const klarheitScore = wordCount > 0 ? clamp(62 + rhythmBonus - fillerPenalty) : 25;
+  let klarheitScore = 25;
+  if (isScripted) {
+    if (scriptMatchRatio !== null) {
+      klarheitScore = clamp(55 + Math.round(scriptMatchRatio * 0.45) - fillerPenalty);
+    } else if (wordCount > 0) {
+      klarheitScore = clamp(92 - fillerPenalty);
+    }
+  } else if (wordCount > 0) {
+    const rhythmBonus = (hasShortPunch ? 16 : 0) + (hasLongBuild ? 14 : 0) + Math.min(16, sentStdDev * 2.5);
+    klarheitScore = clamp(62 + rhythmBonus - fillerPenalty);
+  }
 
   const dimensions = {
     tempo: tempoScore,
@@ -653,24 +793,25 @@ export function analyzeSpeech({
     klarheit: klarheitScore,
   };
 
-  // Weighted Obama-Index
-  const obamaIndex = clamp(
-    tempoScore * 0.16 +
-      pausenScore * 0.2 +
-      dynamikScore * 0.14 +
-      stilmittelScore * 0.18 +
-      wirCharismaScore * 0.18 +
-      klarheitScore * 0.14
-  );
+  // Weighted Score computed strictly over applicableDimensions for this exercise mode
+  let weightedSum = 0;
+  let totalWeight = 0;
+  for (const dimKey of applicableDimensions) {
+    const w = DIMENSION_WEIGHTS[dimKey] || 0;
+    weightedSum += dimensions[dimKey] * w;
+    totalWeight += w;
+  }
+  const obamaIndex = totalWeight > 0 ? clamp(weightedSum / totalWeight) : 50;
 
   // Mandatory words evaluation
   const mandatoryCheck = matchMandatoryWords(text, mandatoryWords);
   const mandatoryMatchedCount = mandatoryCheck.filter((m) => m.matched).length;
 
-  // Coaching feedback (concrete, motivating, Obama-focused)
+  // Coaching feedback (mode-aware, concrete, motivating)
   const feedback = buildCoachingFeedback({
     wordCount,
     wpm,
+    rawWpm,
     audio,
     fillers,
     devices,
@@ -681,15 +822,25 @@ export function analyzeSpeech({
     hasShortPunch,
     hasLongBuild,
     dimensions,
+    applicableDimensions,
+    scriptMatchRatio,
     mandatoryCheck,
     mode,
+    isScripted,
+    isPauseDrill,
+    isStyleDrill,
+    isStorytelling,
   });
 
   return {
+    mode,
+    applicableDimensions,
+    scriptMatchRatio,
     wordCount,
     sentenceCount: sentences.length,
     avgSentenceLen,
     wpm,
+    rawWpm,
     audio,
     fillers,
     devices,
@@ -728,34 +879,47 @@ function buildCoachingFeedback({
   hasShortPunch,
   hasLongBuild,
   dimensions,
+  applicableDimensions,
+  scriptMatchRatio,
   mandatoryCheck,
+  isScripted,
+  isPauseDrill,
+  isStyleDrill,
+  isStorytelling,
 }) {
   const strengths = [];
   const improvements = [];
+  const hasDim = (k) => applicableDimensions.includes(k);
 
-  if (wpm !== null) {
+  if (hasDim('tempo') && wpm !== null) {
     if (wpm >= 112 && wpm <= 138) {
-      strengths.push(`Souveränes Tempo (${wpm} WPM) — genau im Obama-Sweetspot (115–135 WPM).`);
+      strengths.push(`Souveränes Sprechtempo (${wpm} WPM) — genau im Obama-Sweetspot (115–135 WPM).`);
     } else if (wpm > 145) {
       improvements.push(
         `Du sprichst mit ${wpm} WPM noch zu gehetzt. Obama bremst bewusst vor Kernaussagen ab — ziele auf ~125 WPM.`
       );
-    } else if (wpm < 105) {
+    } else if (wpm < 102) {
       improvements.push(`Mit ${wpm} WPM wirkst du etwas stockend. Halte den Fluss zwischen den Pausen stabil.`);
     }
   }
 
-  if (audio.hasAudio) {
-    if (audio.strategicPauses >= 3 && audio.pauseRatio >= 12) {
+  if (hasDim('pausen') && audio.hasAudio) {
+    if (audio.strategicPauses >= 3 && audio.pauseRatio >= 11 && audio.pauseRatio <= 36) {
       strengths.push(
         `Starke Pausenarbeit: ${audio.strategicPauses} bewusste Wirkungspausen (Ø ${audio.avgPauseSec}s). Das erzeugt Autorität.`
+      );
+    } else if (audio.pauseRatio > 38) {
+      improvements.push(
+        `Sehr hoher Pausenanteil (${audio.pauseRatio}%) — halte längere Sätze im Fluss und bündele Pausen gezielt nach Kernaussagen.`
       );
     } else {
       improvements.push(
         `Zu wenige Wirkungspausen (${audio.strategicPauses} erkannt). Nach einem starken Satz innerlich bis „21“ zählen, bevor du weiterredest.`
       );
     }
+  }
 
+  if (hasDim('dynamik') && audio.hasAudio) {
     if (audio.volumeLevel === 'zu leise') {
       improvements.push(
         'Lautstärke zu zurückhaltend: Sprich spürbar aus dem Bauch/Brustraum, damit deine Stimme den Raum trägt.'
@@ -768,14 +932,14 @@ function buildCoachingFeedback({
       strengths.push(`Klare Lautstärke-Präsenz mit ${audio.emphasisPeaks} hörbaren Betonungs-Akzenten.`);
     }
 
-    if (audio.crescendoDelta > 0.05) {
+    if (audio.crescendoDelta >= 0.05) {
       strengths.push('Schönes Finale-Crescendo: Deine Stimmenergie steigt zum Schluss hin an.');
-    } else {
+    } else if (audio.dynamicRange < 0.28 || audio.crescendoDelta < -0.10) {
       improvements.push('Stimm-Dynamik ausbauen: Starte ruhiger und baue zum letzten Absatz spürbar Energie auf.');
     }
 
     if (audio.hasPitch) {
-      if (audio.pitchRangeSemitones >= 4.0) {
+      if (audio.pitchRangeSemitones >= 3.5) {
         strengths.push(
           `Lebendiger Tonfall (${audio.pitchRangeSemitones} Halbtöne Stimmumfang, Ø ${audio.medianPitchHz} Hz) — nicht monoton.`
         );
@@ -794,47 +958,71 @@ function buildCoachingFeedback({
     }
   }
 
-  if (devices.tricolons.length > 0) {
-    strengths.push(`Dreiklang genutzt (${devices.tricolons.slice(0, 2).join(' | ')}) — klassisches Obama-Muster.`);
-  } else {
-    improvements.push('Dreiklang einbauen: Fasse Argumente in 3 steigenden Punkten zusammen („nicht nur X, nicht nur Y, sondern Z“).');
+  if (isScripted && scriptMatchRatio !== null) {
+    if (scriptMatchRatio >= 85) {
+      strengths.push(`Starke Texttreue (${scriptMatchRatio}%) — Vorlage sauber und sicher vorgetragen.`);
+    } else if (scriptMatchRatio < 70) {
+      improvements.push(
+        `Texttreue bei ${scriptMatchRatio}% — orientiere dich ruhiger am Fokus-Balken, um Wort für Wort sicher zu bleiben.`
+      );
+    }
   }
 
-  if (devices.contrasts.length > 0) {
-    strengths.push(`Starke Antithese/Kontrast-Brücke erkannt (${devices.contrasts.length}×).`);
-  } else {
-    improvements.push('Kontrast-Brücke nutzen: „Es geht nicht um [altes Problem], es geht um [gemeinsame Zukunft].“');
+  if (hasDim('stilmittel')) {
+    if (devices.tricolons.length > 0) {
+      strengths.push(`Dreiklang genutzt (${devices.tricolons.slice(0, 2).join(' | ')}) — klassisches Obama-Muster.`);
+    } else if (!isStyleDrill) {
+      improvements.push('Dreiklang einbauen: Fasse Argumente in 3 steigenden Punkten zusammen („nicht nur X, nicht nur Y, sondern Z“).');
+    }
+
+    if (devices.contrasts.length > 0) {
+      strengths.push(`Starke Antithese/Kontrast-Brücke erkannt (${devices.contrasts.length}×).`);
+    } else if (!isStyleDrill) {
+      improvements.push('Kontrast-Brücke nutzen: „Es geht nicht um [altes Problem], es geht um [gemeinsame Zukunft].“');
+    }
+
+    if (devices.anaphoras.length > 0) {
+      strengths.push(`Mitreißende Anapher-Wiederholung (${devices.anaphoras.join(', ')}).`);
+    }
+
+    if (isStyleDrill && devices.totalDevices === 0) {
+      improvements.push('Noch kein klares Stilmittel erkannt — nutze gezielt Dreiklang („A, B und C“), Anapher oder „nicht… sondern…“.');
+    }
   }
 
-  if (devices.anaphoras.length > 0) {
-    strengths.push(`Mitreißende Anapher-Wiederholung (${devices.anaphoras.join(', ')}).`);
+  if (hasDim('wirCharisma')) {
+    if (weCount >= 3 && weRatio >= 55) {
+      strengths.push(`Starkes „Wir“-Charisma (${weCount}× Wir/Uns vs. ${iCount}× Ich) — du nimmst das Publikum mit.`);
+    } else if (!isStorytelling && iCount >= 4 && iCount > weCount * 1.5 && weRatio < 35 && wordCount > 25) {
+      improvements.push(`Starker „Ich“-Fokus (${iCount}× Ich vs. ${weCount}× Wir). Verbinde persönliche Sätze stärker mit „wir“ und „uns“.`);
+    } else if (isStorytelling && weCount === 0 && iCount >= 3) {
+      improvements.push('Brücke zu „Story of Us“ bauen: Überführe deine persönliche „Ich“-Erfahrung im zweiten Teil in ein gemeinsames „Wir“.');
+    }
+
+    if (valuesHits.length >= 2) {
+      strengths.push(`Werte-Anker gesetzt (${valuesHits.slice(0, 4).join(', ')}).`);
+    } else if (!isStorytelling) {
+      improvements.push('Mehr Werte-Sprache einweben (z. B. Vertrauen, Verantwortung, Zuversicht, Zusammenhalt, Fairness).');
+    }
   }
 
-  if (weCount >= 3 && weRatio >= 60) {
-    strengths.push(`Starkes „Wir“-Charisma (${weCount}× Wir/Uns vs. ${iCount}× Ich) — du nimmst das Publikum mit.`);
-  } else if (iCount > weCount && wordCount > 25) {
-    improvements.push(`Zu viel „Ich“ (${iCount}×) statt „Wir“ (${weCount}×). Verwandle persönliche Punkte in gemeinsame Anliegen.`);
-  }
+  if (hasDim('klarheit')) {
+    if (fillers.totalCount > 0) {
+      const topFillers = Object.entries(fillers.found)
+        .map(([k, v]) => `„${k}“ (${v}×)`)
+        .join(', ');
+      improvements.push(`Füllwörter reduzieren: ${topFillers}. Ersetze jedes „ähm/halt“ durch eine stille Pause!`);
+    } else if (wordCount >= 20) {
+      strengths.push('Saubere Sprache ohne erkennbare Füllwörter!');
+    }
 
-  if (valuesHits.length >= 2) {
-    strengths.push(`Werte-Anker gesetzt (${valuesHits.slice(0, 4).join(', ')}).`);
-  } else {
-    improvements.push('Mehr Werte-Sprache einweben (z. B. Vertrauen, Verantwortung, Zuversicht, Zusammenhalt, Fairness).');
-  }
-
-  if (fillers.totalCount > 0) {
-    const topFillers = Object.entries(fillers.found)
-      .map(([k, v]) => `„${k}“ (${v}×)`)
-      .join(', ');
-    improvements.push(`Füllwörter reduzieren: ${topFillers}. Ersetze jedes „ähm/halt“ durch eine stille Pause!`);
-  } else if (wordCount >= 20) {
-    strengths.push('Saubere Sprache ohne erkennbare Füllwörter!');
-  }
-
-  if (!hasShortPunch && wordCount >= 25) {
-    improvements.push('Rhythmus schärfen: Setze nach einem längeren Gedanken einen ganz kurzen 3- bis 5-Wort-Satz als Pointe.');
-  } else if (hasShortPunch && hasLongBuild) {
-    strengths.push('Gute Obama-Kadenz aus langen Aufbau-Sätzen und kurzen Pointen.');
+    if (!isScripted && !isStyleDrill) {
+      if (!hasShortPunch && wordCount >= 30) {
+        improvements.push('Rhythmus schärfen: Setze nach einem längeren Gedanken einen ganz kurzen 3- bis 5-Wort-Satz als Pointe.');
+      } else if (hasShortPunch && hasLongBuild) {
+        strengths.push('Gute Obama-Kadenz aus langen Aufbau-Sätzen und kurzen Pointen.');
+      }
+    }
   }
 
   if (mandatoryCheck.length > 0) {
@@ -846,12 +1034,14 @@ function buildCoachingFeedback({
     }
   }
 
-  if (wordCount < 12 && !audio.hasAudio) {
+  if (wordCount < 12 && !audio.hasAudio && !isPauseDrill) {
     improvements.unshift('Sprich mindestens 30–60 Sekunden (oder füge das Transkript ein), um eine präzise Diagnose zu erhalten.');
   }
 
-  // Pick single highest-impact next action
-  const sortedDims = Object.entries(dimensions).sort((a, b) => a[1] - b[1]);
+  // Pick single highest-impact next action among applicable dimensions
+  const sortedDims = applicableDimensions
+    .map((k) => [k, dimensions[k]])
+    .sort((a, b) => a[1] - b[1]);
   const weakest = sortedDims[0]?.[0];
   const nextStepMap = {
     pausen: 'Nächster Schritt: 3 Minuten „Obama-Sekunde“ (Pausen-Drill), bis du Pausen als Stärke genießt.',
@@ -859,7 +1049,9 @@ function buildCoachingFeedback({
     stilmittel: 'Nächster Schritt: Im Stilmittel-Labor 2 Runden Dreiklang & Kontrast-Pivot trainieren.',
     wirCharisma: 'Nächster Schritt: Im Storytelling-Builder deine eigene Geschichte in „Story of Self → Us → Now“ übersetzen.',
     dynamik: 'Nächster Schritt: Eine Teleprompter-Rede mit ruhigem Einstieg, tiefem Satzende und Crescendo am Schluss aufnehmen.',
-    klarheit: 'Nächster Schritt: Spontanrede mit Fokus auf kurze Schluss-Pointen ohne Füllwörter.',
+    klarheit: isScripted
+      ? 'Nächster Schritt: Abschnitt noch einmal langsam ablesen und jedes Wort exakt im Fokus-Balken halten.'
+      : 'Nächster Schritt: Spontanrede mit Fokus auf kurze Schluss-Pointen ohne Füllwörter.',
   };
 
   return {
@@ -869,7 +1061,7 @@ function buildCoachingFeedback({
   };
 }
 
-export function buildTrainingPlan(dimensions) {
+export function buildTrainingPlan(dimensions = {}) {
   const catalog = {
     pausen: {
       module: 'drills',
@@ -913,6 +1105,7 @@ export function buildTrainingPlan(dimensions) {
   };
 
   return Object.entries(dimensions)
+    .filter(([key, score]) => Boolean(catalog[key]) && Number.isFinite(score))
     .sort((a, b) => a[1] - b[1])
     .slice(0, 3)
     .map(([key, score], idx) => ({

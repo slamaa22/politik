@@ -1,6 +1,8 @@
 import {
+  DIMENSION_WEIGHTS,
   analyzeSpeech,
   buildTrainingPlan,
+  getApplicableDimensions,
   getLevelLabel,
   matchMandatoryWords,
 } from './analyzer.js';
@@ -122,6 +124,23 @@ async function apiPost(url, payload) {
   }
 }
 
+async function apiDelete(url) {
+  try {
+    const res = await fetch(url, { method: 'DELETE', cache: 'no-store' });
+    if (!res.ok) {
+      setSyncStatus('Löschen auf Server fehlgeschlagen', true);
+      return null;
+    }
+    const data = await res.json();
+    if (data?.updatedAt) appState.updatedAt = data.updatedAt;
+    setSyncStatus('Auf Server gespeichert · Synchronisiert');
+    return data;
+  } catch {
+    setSyncStatus('Server nicht erreichbar – nicht gelöscht', true);
+    return null;
+  }
+}
+
 async function uploadAudioRecording(recResult) {
   if (!recResult?.blob || recResult.serverAudioUrl) {
     return recResult?.serverAudioUrl || recResult?.audioUrl || null;
@@ -159,6 +178,89 @@ async function saveSession(sessionObj) {
   updateTopbarAndNav();
   renderDashboard();
   return session;
+}
+
+async function deleteSession(id) {
+  appState.sessions = appState.sessions.filter((s) => s.id !== id);
+  const saved = await apiDelete(`/api/sessions/${encodeURIComponent(id)}`);
+  if (saved?.sessions) {
+    appState.sessions = saved.sessions;
+  }
+  updateTopbarAndNav();
+  renderDashboard();
+}
+
+function resolveSessionApplicableDims(session) {
+  const a = session?.analysis;
+  if (Array.isArray(a?.applicableDimensions) && a.applicableDimensions.length > 0) {
+    return a.applicableDimensions;
+  }
+  const mode = a?.mode || session?.type || 'general';
+  return getApplicableDimensions(mode, {
+    hasAudio: Boolean(a?.audio?.hasAudio),
+    durationSec: Number(a?.audio?.durationSec || (a?.wpm ? 30 : 0)),
+  });
+}
+
+function computeCompetenceProfile() {
+  const baseline = appState.baseline;
+  const sessions = appState.sessions || [];
+  const keys = ['tempo', 'pausen', 'dynamik', 'stilmittel', 'wirCharisma', 'klarheit'];
+
+  if (!baseline && !sessions.length) return null;
+  if (baseline && !sessions.length) {
+    return {
+      obamaIndex: baseline.obamaIndex,
+      levelLabel: baseline.levelLabel || getLevelLabel(baseline.obamaIndex),
+      dimensions: { ...baseline.dimensions },
+      isBaselineOnly: true,
+    };
+  }
+
+  const dimensions = {};
+  for (const k of keys) {
+    const baseVal = baseline?.dimensions?.[k];
+    const relevant = sessions
+      .filter((s) => s?.analysis?.dimensions && Number.isFinite(s.analysis.dimensions[k]))
+      .filter((s) => resolveSessionApplicableDims(s).includes(k))
+      .slice(0, 4);
+
+    if (!relevant.length) {
+      dimensions[k] = Number.isFinite(baseVal) ? baseVal : 65;
+      continue;
+    }
+
+    // Recency-weighted average of relevant sessions for this dimension only
+    let wSum = 0;
+    let vSum = 0;
+    relevant.forEach((s, idx) => {
+      const w = 1 / (idx + 1);
+      wSum += w;
+      vSum += s.analysis.dimensions[k] * w;
+    });
+    const recentAvg = vSum / wSum;
+
+    if (Number.isFinite(baseVal)) {
+      // Smooth gradual shift from fixed Startwert (max 45% after 3+ relevant sessions)
+      const sessionWeight = Math.min(0.45, relevant.length * 0.15);
+      dimensions[k] = Math.round(baseVal * (1 - sessionWeight) + recentAvg * sessionWeight);
+    } else {
+      dimensions[k] = Math.round(recentAvg);
+    }
+  }
+
+  let total = 0;
+  for (const k of keys) {
+    total += dimensions[k] * (DIMENSION_WEIGHTS[k] || 0);
+  }
+  const obamaIndex = Math.round(total);
+
+  return {
+    obamaIndex,
+    levelLabel: getLevelLabel(obamaIndex),
+    dimensions,
+    isBaselineOnly: false,
+  };
 }
 
 // --- Formatting & UI Helpers ---
@@ -283,11 +385,17 @@ function renderAnalysisCard(container, title, analysis) {
   if (!container) return;
   container.classList.remove('hidden');
 
-  const dimRows = Object.entries(analysis.dimensions)
+  const applicable = Array.isArray(analysis.applicableDimensions) && analysis.applicableDimensions.length > 0
+    ? analysis.applicableDimensions
+    : Object.keys(analysis.dimensions);
+  const hasDim = (k) => applicable.includes(k);
+
+  const dimRows = applicable
+    .filter((k) => Number.isFinite(analysis.dimensions?.[k]))
     .map(
-      ([k, val]) => `
+      (k) => `
       <div class="metric-pill num">
-        <strong>${DIMENSION_META[k].short}:</strong> ${val}/100
+        <strong>${DIMENSION_META[k].short}:</strong> ${analysis.dimensions[k]}/100
       </div>`
     )
     .join('');
@@ -313,7 +421,34 @@ function renderAnalysisCard(container, title, analysis) {
 
   const improvementsHtml = analysis.feedback.improvements.length
     ? analysis.feedback.improvements.map((s) => `<li>${s}</li>`).join('')
-    : '<li>Starke Runde. Steigere jetzt Tempo-Kontrolle und Pausenlänge.</li>';
+    : '<li>Starke Runde. Halte genau diese Ruhe und Präsenz.</li>';
+
+  const metricPills = [
+    `<div class="metric-pill num"><strong>Wörter:</strong> ${analysis.wordCount}</div>`,
+  ];
+  if (hasDim('tempo')) {
+    metricPills.push(`<div class="metric-pill num"><strong>Sprechtempo:</strong> ${analysis.wpm ? `${analysis.wpm} WPM` : '—'}</div>`);
+  }
+  if (hasDim('pausen')) {
+    metricPills.push(`<div class="metric-pill num"><strong>Wirkungspausen:</strong> ${analysis.audio.hasAudio ? `${analysis.audio.strategicPauses} (${analysis.audio.pauseRatio}%)` : '—'}</div>`);
+  }
+  if (hasDim('dynamik')) {
+    metricPills.push(`<div class="metric-pill num"><strong>Lautstärke:</strong> ${analysis.audio.hasAudio ? `${analysis.audio.volumeLevel} (${analysis.audio.emphasisPeaks} Akzente)` : '—'}</div>`);
+    metricPills.push(`<div class="metric-pill num"><strong>Tonfall:</strong> ${analysis.audio.hasPitch ? `${analysis.audio.pitchRangeSemitones} Halbtöne · ${analysis.audio.medianPitchHz} Hz` : '—'}</div>`);
+    metricPills.push(`<div class="metric-pill num"><strong>Satzende:</strong> ${analysis.audio.authorityCadenceRatio !== null ? `${analysis.audio.authorityCadenceRatio}% sicher (${analysis.audio.downwardCadences} fallend)` : '—'}</div>`);
+  }
+  if (analysis.scriptMatchRatio !== null && analysis.scriptMatchRatio !== undefined) {
+    metricPills.push(`<div class="metric-pill num"><strong>Texttreue:</strong> ${analysis.scriptMatchRatio}%</div>`);
+  }
+  if (hasDim('wirCharisma')) {
+    metricPills.push(`<div class="metric-pill num"><strong>Wir / Ich:</strong> ${analysis.weCount} / ${analysis.iCount}</div>`);
+  }
+  if (hasDim('stilmittel')) {
+    metricPills.push(`<div class="metric-pill num"><strong>Stilmittel:</strong> ${analysis.devices.totalDevices}</div>`);
+  }
+  if (hasDim('klarheit')) {
+    metricPills.push(`<div class="metric-pill num"><strong>Füllwörter:</strong> ${analysis.fillers.totalCount}</div>`);
+  }
 
   container.innerHTML = `
     <div class="card-header">
@@ -326,15 +461,7 @@ function renderAnalysisCard(container, title, analysis) {
     </div>
 
     <div class="metric-pills">
-      <div class="metric-pill num"><strong>Wörter:</strong> ${analysis.wordCount}</div>
-      <div class="metric-pill num"><strong>Tempo:</strong> ${analysis.wpm ? `${analysis.wpm} WPM` : '—'}</div>
-      <div class="metric-pill num"><strong>Wirkungspausen:</strong> ${analysis.audio.hasAudio ? `${analysis.audio.strategicPauses} (${analysis.audio.pauseRatio}%)` : '—'}</div>
-      <div class="metric-pill num"><strong>Lautstärke:</strong> ${analysis.audio.hasAudio ? `${analysis.audio.volumeLevel} (${analysis.audio.emphasisPeaks} Akzente)` : '—'}</div>
-      <div class="metric-pill num"><strong>Tonfall:</strong> ${analysis.audio.hasPitch ? `${analysis.audio.pitchRangeSemitones} Halbtöne · ${analysis.audio.medianPitchHz} Hz` : '—'}</div>
-      <div class="metric-pill num"><strong>Satzende:</strong> ${analysis.audio.authorityCadenceRatio !== null ? `${analysis.audio.authorityCadenceRatio}% sicher (${analysis.audio.downwardCadences} fallend)` : '—'}</div>
-      <div class="metric-pill num"><strong>Wir / Ich:</strong> ${analysis.weCount} / ${analysis.iCount}</div>
-      <div class="metric-pill num"><strong>Stilmittel:</strong> ${analysis.devices.totalDevices}</div>
-      <div class="metric-pill num"><strong>Füllwörter:</strong> ${analysis.fillers.totalCount}</div>
+      ${metricPills.join('')}
     </div>
 
     <div class="metric-pills">${dimRows}</div>
@@ -395,8 +522,8 @@ function updateTopbarAndNav() {
     navBadge.classList.remove('badge-accent');
   }
 
-  const latest = appState.sessions[0]?.analysis || appState.baseline;
-  topIndex.textContent = latest ? `${latest.obamaIndex}/100` : '—';
+  const profile = computeCompetenceProfile();
+  topIndex.textContent = profile ? `${profile.obamaIndex}/100` : '—';
 }
 
 // ================= MODULE 0: EINGANGSTEST =================
@@ -582,6 +709,7 @@ async function evaluateBaselineStep() {
   let text = transcriptEl.value.trim();
 
   const rec = baselineState.lastRecording;
+  const hasTranscript = Boolean(text);
   if (!text && part.readText && rec && rec.durationSec >= 5) {
     text = part.readText;
   }
@@ -602,6 +730,8 @@ async function evaluateBaselineStep() {
     audioSamples: rec?.samples || [],
     mandatoryWords: part.mandatoryWords || [],
     mode: part.type,
+    referenceText: part.readText || null,
+    hasTranscript,
   });
 
   baselineState.stepResults[baselineState.stepIdx] = {
@@ -627,8 +757,13 @@ async function finishBaselineTest() {
   const completed = baselineState.stepResults.filter(Boolean);
   if (completed.length < 3) return;
 
-  const avgDim = (key) =>
-    Math.round(completed.reduce((sum, r) => sum + r.analysis.dimensions[key], 0) / completed.length);
+  const avgDim = (key) => {
+    const relevant = completed.filter(
+      (r) => !Array.isArray(r.analysis.applicableDimensions) || r.analysis.applicableDimensions.includes(key)
+    );
+    const pool = relevant.length ? relevant : completed;
+    return Math.round(pool.reduce((sum, r) => sum + r.analysis.dimensions[key], 0) / pool.length);
+  };
 
   const dimensions = {
     tempo: avgDim('tempo'),
@@ -762,19 +897,21 @@ function renderDashboard() {
   const noBase = document.getElementById('dashNoBaseline');
   noBase.classList.toggle('hidden', Boolean(appState.baseline));
 
-  const latest = appState.sessions[0]?.analysis || appState.baseline;
+  const profile = computeCompetenceProfile();
   const baseline = appState.baseline;
+  const latestSession = appState.sessions[0];
 
-  document.getElementById('dashCurrentScore').textContent = latest ? `${latest.obamaIndex}/100` : '—';
-  document.getElementById('dashCurrentLevel').textContent = latest ? latest.levelLabel : 'Eingangstest starten';
+  document.getElementById('dashCurrentScore').textContent = profile ? `${profile.obamaIndex}/100` : '—';
+  document.getElementById('dashCurrentLevel').textContent = profile ? profile.levelLabel : 'Eingangstest starten';
 
   document.getElementById('dashBaselineScore').textContent = baseline ? `${baseline.obamaIndex}/100` : '—';
-  if (baseline && appState.sessions[0]) {
-    const delta = appState.sessions[0].analysis.obamaIndex - baseline.obamaIndex;
+  if (baseline && profile && latestSession) {
+    const delta = profile.obamaIndex - baseline.obamaIndex;
+    const sign = delta >= 0 ? `+${delta}` : `${delta}`;
     document.getElementById('dashDeltaText').textContent =
-      delta >= 0 ? `+${delta} Punkte seit Start` : `${delta} Punkte zum Start`;
+      `${sign} vs. Start · Letzte Übung: ${latestSession.analysis?.obamaIndex ?? '—'}/100`;
   } else {
-    document.getElementById('dashDeltaText').textContent = baseline ? 'Baseline erfasst' : 'Noch kein Test';
+    document.getElementById('dashDeltaText').textContent = baseline ? 'Startwert (fix)' : 'Noch kein Test';
   }
 
   document.getElementById('dashSessionCount').textContent = String(appState.sessions.length);
@@ -784,13 +921,13 @@ function renderDashboard() {
     : null;
   document.getElementById('dashAvgWpm').textContent = `Ø Tempo: ${avgWpm ? `${avgWpm} WPM` : '—'}`;
 
-  if (latest?.dimensions) {
-    const sorted = Object.entries(latest.dimensions).sort((a, b) => b[1] - a[1]);
+  if (profile?.dimensions) {
+    const sorted = Object.entries(profile.dimensions).sort((a, b) => b[1] - a[1]);
     document.getElementById('dashBestWorst').textContent =
       `${DIMENSION_META[sorted[0][0]].short} (${sorted[0][1]}) / ${DIMENSION_META[sorted[sorted.length - 1][0]].short} (${sorted[sorted.length - 1][1]})`;
     renderRadarChart(
       document.getElementById('dashRadarContainer'),
-      latest.dimensions,
+      profile.dimensions,
       baseline && appState.sessions.length > 0 ? baseline.dimensions : null
     );
   } else {
@@ -798,7 +935,9 @@ function renderDashboard() {
       '<p class="muted-text">Schließe den Eingangstest oder eine erste Übung ab, um dein Radar zu sehen.</p>';
   }
 
-  const plan = baseline?.plan || (latest?.dimensions ? buildTrainingPlan(latest.dimensions) : []);
+  const plan = profile?.dimensions
+    ? buildTrainingPlan(profile.dimensions)
+    : baseline?.plan || [];
   const planEl = document.getElementById('dashPlanList');
   planEl.innerHTML = plan.length
     ? plan
@@ -840,6 +979,9 @@ function renderDashboard() {
             </div>
             <div class="btn-group">
               <span class="badge badge-neutral num">${s.analysis?.obamaIndex ?? '—'}/100</span>
+              <button type="button" class="btn btn-outline btn-sm" data-delete-session="${s.id}" title="Einheit löschen" aria-label="Einheit löschen">
+                ${icon('trash', 13)}
+              </button>
             </div>
           </div>`;
       })
@@ -1207,6 +1349,8 @@ function initTeleprompterView() {
       durationSec: recResult.durationSec,
       audioSamples: recResult.samples,
       mode: 'teleprompter',
+      referenceText: speech.text,
+      hasTranscript: Boolean(recResult.transcript?.trim()),
     });
 
     renderAnalysisCard(
@@ -1837,6 +1981,11 @@ async function bootstrap() {
         switchSubdrill(launch.dataset.subdrill);
       }
     }
+
+    const delSession = e.target.closest('[data-delete-session]');
+    if (delSession) {
+      deleteSession(delSession.dataset.deleteSession);
+    }
   });
 
   document.getElementById('retestBaselineBtn').addEventListener('click', async () => {
@@ -1850,12 +1999,9 @@ async function bootstrap() {
   });
 
   document.getElementById('clearHistoryBtn').addEventListener('click', async () => {
-    if (!confirm('Trainingsverlauf wirklich zurücksetzen?')) return;
+    if (!confirm('Trainings-Logbuch wirklich leeren? Dein Eingangstest-Startwert bleibt erhalten.')) return;
     appState.sessions = [];
-    appState.baseline = null;
-    appState.baselineProgress = { stepIdx: 0, stepResults: [null, null, null] };
-    await apiPost('/api/reset', { scope: 'all' });
-    hydrateBaselineFromAppState();
+    await apiPost('/api/reset', { scope: 'sessions' });
     updateTopbarAndNav();
     renderDashboard();
   });
