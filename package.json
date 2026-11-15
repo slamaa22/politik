@@ -1,0 +1,13 @@
+{
+  "name": "obama-rhetoriktrainer",
+  "version": "1.0.0",
+  "description": "Politischer Rhetorik- & Charisma-Trainer inspiriert von Barack Obamas Redekunst",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

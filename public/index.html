@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ORATOR — Rhetoriktrainer</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" data-icon="mic" data-size="18"></div>
+        <div>
+          <div class="brand-title">ORATOR</div>
+          <div class="brand-sub">Rhetorik &amp; Präsenz</div>
+        </div>
+      </div>
+
+      <div id="baselineStatusCard" class="baseline-pill pending">
+        <span class="pill-dot"></span>
+        <span id="baselineStatusText">Eingangstest ausstehend</span>
+      </div>
+
+      <nav class="nav-list" aria-label="Hauptnavigation">
+        <button class="nav-item" data-view="eingangstest">
+          <span class="nav-icon" data-icon="target" data-size="16"></span>
+          <span>Eingangstest</span>
+          <span id="navBaselineBadge" class="badge badge-neutral">Start</span>
+        </button>
+        <button class="nav-item" data-view="dashboard">
+          <span class="nav-icon" data-icon="trendingUp" data-size="16"></span>
+          <span>Profil &amp; Plan</span>
+        </button>
+        <button class="nav-item" data-view="spontanrede">
+          <span class="nav-icon" data-icon="mic" data-size="16"></span>
+          <span>Spontanrede</span>
+        </button>
+        <button class="nav-item" data-view="teleprompter">
+          <span class="nav-icon" data-icon="fileText" data-size="16"></span>
+          <span>Rede ablesen</span>
+        </button>
+        <button class="nav-item" data-view="wort-challenge">
+          <span class="nav-icon" data-icon="shuffle" data-size="16"></span>
+          <span>Pflichtwörter</span>
+        </button>
+        <button class="nav-item" data-view="drills">
+          <span class="nav-icon" data-icon="sliders" data-size="16"></span>
+          <span>Drills &amp; Gegenwind</span>
+        </button>
+        <button class="nav-item" data-view="playbook">
+          <span class="nav-icon" data-icon="book" data-size="16"></span>
+          <span>Playbook</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="exportCoachReportBtn" class="btn btn-outline btn-sm btn-block">
+          <span data-icon="copy" data-size="14"></span>
+          <span>Coaching-Report kopieren</span>
+        </button>
+        <p class="tiny-note">Lokal gespeichert · Audio- &amp; Textanalyse</p>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <h1 id="viewTitle">Eingangstest</h1>
+          <p id="viewSubtitle" class="subtitle">
+            Standortbestimmung deiner aktuellen Rhetorik vor Trainingsbeginn.
+          </p>
+        </div>
+        <div class="topbar-actions">
+          <div class="index-chip" id="topIndexChip" title="Aktueller Rhetorik-Index">
+            <span class="index-chip-label">Rhetorik-Index</span>
+            <strong id="topIndexValue" class="num">—</strong>
+          </div>
+        </div>
+      </header>
+
+      <!-- ================= VIEW: EINGANGSTEST ================= -->
+      <section id="view-eingangstest" class="view active">
+        <div id="baselineLockNotice" class="callout">
+          <span><strong>Schritt 1 vor dem Training:</strong> Absolviere zuerst diese 3-teilige Diagnose, damit wir dein echtes Startniveau messen und deinen Trainingsplan exakt festlegen.</span>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Baseline-Diagnose</span>
+              <h2 id="basePartTitle">Teil 1: Deine spontane Haltung</h2>
+            </div>
+            <div class="step-pills" id="baseStepPills">
+              <button type="button" class="step-pill active" data-step="0">1. Spontan</button>
+              <button type="button" class="step-pill" data-step="1">2. Kadenz</button>
+              <button type="button" class="step-pill" data-step="2">3. Brückenbau</button>
+            </div>
+          </div>
+
+          <div class="prompt-box" id="basePromptBox">
+            <p class="prompt-main" id="basePromptText"></p>
+            <p class="prompt-hint" id="basePromptHint"></p>
+            <div id="baseReadTextWrap" class="read-card hidden"></div>
+            <div id="baseWordsWrap" class="mandatory-chips hidden"></div>
+          </div>
+
+          <div class="studio-controls">
+            <div class="timer-display">
+              <span class="timer-label">Zeit</span>
+              <strong id="baseTimer" class="num">00:00</strong>
+              <span class="timer-target num" id="baseTargetTime">/ 01:00</span>
+            </div>
+            <div class="rec-buttons">
+              <button id="baseStartBtn" class="btn btn-primary">
+                <span data-icon="mic" data-size="15"></span>
+                <span>Aufnahme starten</span>
+              </button>
+              <button id="baseStopBtn" class="btn btn-danger hidden">
+                <span data-icon="square" data-size="15"></span>
+                <span>Stoppen &amp; Auswerten</span>
+              </button>
+            </div>
+            <div class="live-pausen-ampel" id="baseAmpel">
+              <span class="ampel-dot"></span>
+              <span class="ampel-text">Bereit</span>
+            </div>
+          </div>
+
+          <canvas id="baseCanvas" class="waveform-canvas" width="760" height="80"></canvas>
+          <div id="baseSpeechNotice" class="speech-notice hidden"></div>
+          <div id="baseAudioPlayback" class="audio-playback hidden"></div>
+
+          <label class="field-label" for="baseTranscript">
+            Gesprochener Text / Transkript (live mitgeschrieben oder manuell einfügen)
+          </label>
+          <textarea
+            id="baseTranscript"
+            class="transcript-input"
+            rows="5"
+            placeholder="Sprich ins Mikrofon – oder füge hier deine Antwort ein..."
+          ></textarea>
+
+          <div class="card-actions-between">
+            <div class="muted-text" id="baseSavedSummary">Noch nicht ausgewertet</div>
+            <div class="btn-group">
+              <button id="baseAnalyzeStepBtn" class="btn btn-secondary">Runde auswerten</button>
+              <button id="baseNextStepBtn" class="btn btn-primary hidden">
+                <span>Weiter zu Teil 2</span>
+                <span data-icon="arrowRight" data-size="15"></span>
+              </button>
+              <button id="baseFinishBtn" class="btn btn-accent hidden">
+                <span data-icon="check" data-size="15"></span>
+                <span>Eingangstest abschließen</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="baseResultCard" class="card hidden">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Ausgangsprofil</span>
+              <h2 id="baseResultHeadline">Ergebnis deines Eingangstests</h2>
+            </div>
+            <div class="score-badge-lg num" id="baseOverallScore">0</div>
+          </div>
+          <div class="grid-2">
+            <div id="baseRadarContainer" class="radar-box"></div>
+            <div id="baseFeedbackContainer" class="feedback-box"></div>
+          </div>
+          <div class="divider"></div>
+          <h3>Dein persönlicher Trainingsplan</h3>
+          <div id="basePlanCards" class="plan-grid"></div>
+          <div class="card-actions-end">
+            <button id="goToDashboardBtn" class="btn btn-primary">
+              <span>Zum Profil &amp; Trainingsplan</span>
+              <span data-icon="arrowRight" data-size="15"></span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= VIEW: DASHBOARD ================= -->
+      <section id="view-dashboard" class="view">
+        <div id="dashNoBaseline" class="callout callout-warn hidden">
+          <span><strong>Hinweis:</strong> Der Eingangstest steht noch aus.</span>
+          <button class="btn btn-sm btn-primary" data-jump="eingangstest">Eingangstest starten</button>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <span class="kpi-label">Aktueller Index</span>
+            <strong class="kpi-value num" id="dashCurrentScore">—</strong>
+            <span class="kpi-sub" id="dashCurrentLevel">Noch keine Daten</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Baseline (Start)</span>
+            <strong class="kpi-value num" id="dashBaselineScore">—</strong>
+            <span class="kpi-sub" id="dashDeltaText">Vor Trainingsbeginn</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Einheiten</span>
+            <strong class="kpi-value num" id="dashSessionCount">0</strong>
+            <span class="kpi-sub num" id="dashAvgWpm">Ø Tempo: — WPM</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Stärkste / Schwächste Säule</span>
+            <strong class="kpi-value kpi-sm" id="dashBestWorst">—</strong>
+            <span class="kpi-sub">Zielkorridor: 85/100</span>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <h2>Kompetenz-Radar</h2>
+              <button id="retestBaselineBtn" class="btn btn-outline btn-sm">
+                <span data-icon="rotate" data-size="14"></span>
+                <span>Eingangstest wiederholen</span>
+              </button>
+            </div>
+            <div id="dashRadarContainer" class="radar-box"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <span class="eyebrow">Priorisiert</span>
+                <h2>Dein Trainingsplan</h2>
+              </div>
+            </div>
+            <div id="dashPlanList" class="plan-stack"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Trainings-Logbuch</h2>
+            <button id="clearHistoryBtn" class="btn btn-outline btn-sm">Verlauf zurücksetzen</button>
+          </div>
+          <div id="dashHistoryList" class="history-list"></div>
+        </div>
+      </section>
+
+      <!-- ================= VIEW: SPONTANREDE ================= -->
+      <section id="view-spontanrede" class="view">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Freies Sprechen</span>
+              <h2>Spontanrede-Studio</h2>
+            </div>
+            <div class="toolbar-inline">
+              <select id="spontanCategory" class="select-input">
+                <option value="ALL">Alle Themengebiete</option>
+              </select>
+              <button id="spontanNewTopicBtn" class="btn btn-secondary">
+                <span data-icon="shuffle" data-size="15"></span>
+                <span>Zufallsthema</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="prompt-box">
+            <span class="badge badge-neutral" id="spontanCatBadge">Kommunalpolitik</span>
+            <p class="prompt-main" id="spontanTopicText"></p>
+            <p class="prompt-hint" id="spontanAngleText"></p>
+          </div>
+
+          <div class="config-row">
+            <label>
+              Vorbereitung:
+              <select id="spontanPrepSec" class="select-input">
+                <option value="0">Sofort (0s)</option>
+                <option value="15" selected>15 Sekunden</option>
+                <option value="30">30 Sekunden</option>
+                <option value="60">60 Sekunden</option>
+              </select>
+            </label>
+            <label>
+              Redezeit:
+              <select id="spontanDurationSec" class="select-input">
+                <option value="60">60 Sekunden</option>
+                <option value="90" selected>90 Sekunden</option>
+                <option value="120">2 Minuten</option>
+                <option value="180">3 Minuten</option>
+              </select>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="spontanShowGuide" checked />
+              <span>Struktur-Leitfaden zeigen</span>
+            </label>
+          </div>
+
+          <div id="spontanGuideBox" class="structure-guide">
+            <div><strong>1. Konkreter Einstieg</strong><span>Ein Mensch, ein Ort, eine Szene</span></div>
+            <div><strong>2. Kontrast-Problem</strong><span>„Es geht nicht um X, sondern um Y“</span></div>
+            <div><strong>3. Dreiklang-Lösung</strong><span>3 klare Punkte in ruhigem Tempo</span></div>
+            <div><strong>4. Wir-Appell + Pause</strong><span>Zuversicht und 1,5s Stille am Ende</span></div>
+          </div>
+
+          <div class="studio-controls">
+            <div class="timer-display">
+              <span class="timer-label" id="spontanPhaseLabel">Bereit</span>
+              <strong id="spontanTimer" class="num">01:30</strong>
+            </div>
+            <div class="rec-buttons">
+              <button id="spontanStartBtn" class="btn btn-primary">
+                <span data-icon="mic" data-size="15"></span>
+                <span>Starten</span>
+              </button>
+              <button id="spontanSkipPrepBtn" class="btn btn-secondary hidden">
+                <span>Vorbereitung überspringen</span>
+                <span data-icon="arrowRight" data-size="15"></span>
+              </button>
+              <button id="spontanStopBtn" class="btn btn-danger hidden">
+                <span data-icon="square" data-size="15"></span>
+                <span>Beenden &amp; Analysieren</span>
+              </button>
+            </div>
+            <div class="live-pausen-ampel" id="spontanAmpel">
+              <span class="ampel-dot"></span>
+              <span class="ampel-text">Bereit</span>
+            </div>
+          </div>
+
+          <canvas id="spontanCanvas" class="waveform-canvas" width="760" height="80"></canvas>
+          <div id="spontanSpeechNotice" class="speech-notice hidden"></div>
+          <div id="spontanAudioPlayback" class="audio-playback hidden"></div>
+
+          <textarea
+            id="spontanTranscript"
+            class="transcript-input"
+            rows="5"
+            placeholder="Live-Transkript erscheint hier (oder Text manuell eingeben)..."
+          ></textarea>
+
+          <div class="card-actions-end">
+            <button id="spontanAnalyzeBtn" class="btn btn-secondary">Auswerten &amp; speichern</button>
+          </div>
+        </div>
+
+        <div id="spontanResultCard" class="card hidden"></div>
+      </section>
+
+      <!-- ================= VIEW: TELEPROMPTER ================= -->
+      <section id="view-teleprompter" class="view">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Kadenz &amp; Pausen</span>
+              <h2>Zufällige Rede ablesen</h2>
+            </div>
+            <div class="toolbar-inline">
+              <button id="tpRandomBtn" class="btn btn-primary">
+                <span data-icon="shuffle" data-size="15"></span>
+                <span>Zufällige Rede ziehen</span>
+              </button>
+              <button id="tpCustomToggleBtn" class="btn btn-outline">
+                <span data-icon="plus" data-size="15"></span>
+                <span>Eigene Rede</span>
+              </button>
+            </div>
+          </div>
+
+          <div id="tpCustomForm" class="subpanel hidden">
+            <h3>Eigene Rede für den Teleprompter</h3>
+            <p class="muted-text">Regiezeichen: <code>[PAUSE 1.5s]</code>, <code>[CRESCENDO]</code> oder <code>[BETONUNG: Wort]</code>.</p>
+            <div class="grid-2">
+              <input id="tpCustomTitle" class="text-input" placeholder="Titel der Rede" />
+              <input id="tpCustomCategory" class="text-input" placeholder="Kategorie (z. B. Kommunalwahl)" />
+            </div>
+            <textarea id="tpCustomText" class="transcript-input" rows="4" placeholder="Redetext hier einfügen..."></textarea>
+            <div class="card-actions-end">
+              <button id="tpSaveCustomBtn" class="btn btn-primary btn-sm">Rede speichern</button>
+            </div>
+          </div>
+
+          <div class="tp-selector-row">
+            <select id="tpSpeechSelect" class="select-input select-wide"></select>
+            <span class="badge badge-neutral" id="tpTechniqueBadge"></span>
+          </div>
+
+          <div class="tp-controls-bar">
+            <label>
+              Tempo: <strong id="tpWpmLabel" class="num">125</strong> WPM <span class="sweetspot-tag">(Ziel: 115–135)</span>
+              <input type="range" id="tpWpmSlider" min="85" max="175" value="125" />
+            </label>
+            <label>
+              Schriftgröße: <strong id="tpFontLabel" class="num">28</strong>px
+              <input type="range" id="tpFontSlider" min="20" max="44" value="28" />
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="tpMirrorCheck" />
+              <span>Spiegeln</span>
+            </label>
+            <button id="tpFullscreenBtn" class="btn btn-outline btn-sm">
+              <span data-icon="maximize" data-size="14"></span>
+              <span>Vollbild</span>
+            </button>
+          </div>
+
+          <div id="tpStage" class="teleprompter-stage">
+            <div class="tp-focus-line" aria-hidden="true"></div>
+            <div id="tpScrollContent" class="tp-scroll-content"></div>
+          </div>
+
+          <div class="studio-controls">
+            <div class="btn-group">
+              <button id="tpPlayScrollBtn" class="btn btn-primary">
+                <span data-icon="play" data-size="15"></span>
+                <span>Prompter + Aufnahme starten</span>
+              </button>
+              <button id="tpPauseScrollBtn" class="btn btn-secondary hidden">
+                <span data-icon="pause" data-size="15"></span>
+                <span>Pause</span>
+              </button>
+              <button id="tpResetScrollBtn" class="btn btn-outline">
+                <span data-icon="rotate" data-size="15"></span>
+                <span>Anfang</span>
+              </button>
+              <button id="tpStopRecBtn" class="btn btn-danger hidden">
+                <span data-icon="square" data-size="15"></span>
+                <span>Beenden &amp; Kadenz prüfen</span>
+              </button>
+            </div>
+            <div class="timer-display">
+              <span class="timer-label">Aufnahme</span>
+              <strong id="tpTimer" class="num">00:00</strong>
+            </div>
+          </div>
+
+          <canvas id="tpCanvas" class="waveform-canvas" width="760" height="70"></canvas>
+          <div id="tpAudioPlayback" class="audio-playback hidden"></div>
+        </div>
+
+        <div id="tpResultCard" class="card hidden"></div>
+      </section>
+
+      <!-- ================= VIEW: WORT-CHALLENGE ================= -->
+      <section id="view-wort-challenge" class="view">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Flexibilität unter Druck</span>
+              <h2>Zufälliges Thema + Pflichtwörter</h2>
+            </div>
+            <div class="toolbar-inline">
+              <select id="wcDifficulty" class="select-input">
+                <option value="leicht">Leicht (Politik-Begriffe)</option>
+                <option value="mittel" selected>Mittel (Bildhafte Wörter)</option>
+                <option value="profi">Profi (Metaphern)</option>
+              </select>
+              <select id="wcCount" class="select-input">
+                <option value="3" selected>3 Wörter</option>
+                <option value="4">4 Wörter</option>
+                <option value="5">5 Wörter</option>
+              </select>
+              <button id="wcRollBtn" class="btn btn-primary">
+                <span data-icon="shuffle" data-size="15"></span>
+                <span>Neu auslosen</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="prompt-box">
+            <span class="eyebrow">Zugelostes Thema</span>
+            <p class="prompt-main" id="wcTopicText"></p>
+            <p class="prompt-hint">Erwähne alle markierten Wörter natürlich in deiner Rede. Wörter werden per Transkript automatisch erkannt oder per Klick abgehakt.</p>
+            <div id="wcWordsContainer" class="mandatory-chips"></div>
+          </div>
+
+          <div class="studio-controls">
+            <div class="timer-display">
+              <span class="timer-label">Redezeit</span>
+              <strong id="wcTimer" class="num">00:00</strong>
+              <span class="timer-target num">/ 01:30</span>
+            </div>
+            <div class="rec-buttons">
+              <button id="wcStartBtn" class="btn btn-primary">
+                <span data-icon="mic" data-size="15"></span>
+                <span>Challenge starten</span>
+              </button>
+              <button id="wcStopBtn" class="btn btn-danger hidden">
+                <span data-icon="square" data-size="15"></span>
+                <span>Stoppen &amp; Auswerten</span>
+              </button>
+            </div>
+            <div class="live-pausen-ampel" id="wcAmpel">
+              <span class="ampel-dot"></span>
+              <span class="ampel-text">Bereit</span>
+            </div>
+          </div>
+
+          <canvas id="wcCanvas" class="waveform-canvas" width="760" height="80"></canvas>
+          <div id="wcSpeechNotice" class="speech-notice hidden"></div>
+          <div id="wcAudioPlayback" class="audio-playback hidden"></div>
+
+          <textarea
+            id="wcTranscript"
+            class="transcript-input"
+            rows="5"
+            placeholder="Live-Transkript oder Text-Entwurf..."
+          ></textarea>
+
+          <div class="card-actions-end">
+            <button id="wcAnalyzeBtn" class="btn btn-secondary">Challenge auswerten &amp; speichern</button>
+          </div>
+        </div>
+
+        <div id="wcResultCard" class="card hidden"></div>
+      </section>
+
+      <!-- ================= VIEW: OBAMA DRILLS ================= -->
+      <section id="view-drills" class="view">
+        <div class="subtabs">
+          <button class="subtab active" data-subdrill="pausen">Pausen-Drill</button>
+          <button class="subtab" data-subdrill="stilmittel">Stilmittel-Labor</button>
+          <button class="subtab" data-subdrill="story">Story: Self · Us · Now</button>
+          <button class="subtab" data-subdrill="gegenwind">Gegenwind-Simulator</button>
+        </div>
+
+        <!-- Drill A: Pausen -->
+        <div id="subdrill-pausen" class="subdrill-panel active card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Wirkung durch Stille</span>
+              <h2>Die Obama-Sekunde (45s Pausen-Drill)</h2>
+            </div>
+          </div>
+          <p class="muted-text">
+            Sprich 45 Sekunden über ein beliebiges Thema. Halte nach jeder Kernaussage <strong>1,2 bis 2,0 Sekunden Stille</strong>. Der Zähler misst deine Wirkungspausen in Echtzeit.
+          </p>
+          <div class="pause-meter-grid">
+            <div class="pause-live-box" id="pauseLiveIndicator">
+              <div class="pause-state-badge" id="pauseStateText">Bereit</div>
+              <div class="pause-timer-big num" id="pauseSilentStreak">0.0 s</div>
+              <span class="muted-text">Aktuelle Stille</span>
+            </div>
+            <div class="pause-stats-box">
+              <div><span>Gezählte Wirkungspausen (&ge; 0,8 s)</span> <strong id="pauseLiveCount" class="num">0</strong></div>
+              <div><span>Ziel in 45 Sekunden</span> <strong class="num">4 – 6 Pausen</strong></div>
+              <div><span>Restzeit</span> <strong id="pauseDrillTimer" class="num">00:45</strong></div>
+            </div>
+          </div>
+          <div class="studio-controls">
+            <button id="pauseDrillStartBtn" class="btn btn-primary">
+              <span data-icon="mic" data-size="15"></span>
+              <span>45s Pausen-Drill starten</span>
+            </button>
+            <button id="pauseDrillStopBtn" class="btn btn-danger hidden">
+              <span data-icon="square" data-size="15"></span>
+              <span>Beenden &amp; Speichern</span>
+            </button>
+          </div>
+          <canvas id="pauseCanvas" class="waveform-canvas" width="760" height="72"></canvas>
+          <div id="pauseDrillResult" class="subresult hidden"></div>
+        </div>
+
+        <!-- Drill B: Stilmittel -->
+        <div id="subdrill-stilmittel" class="subdrill-panel card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Rhetorische Architektur</span>
+              <h2>Stilmittel-Labor: Dreiklang, Anapher &amp; Kontrast</h2>
+            </div>
+          </div>
+          <div id="styleDrillCards" class="style-drill-grid"></div>
+          <div class="divider"></div>
+          <div class="prompt-box">
+            <span class="eyebrow">Aktive Aufgabe</span>
+            <p class="prompt-main" id="styleActivePrompt"></p>
+          </div>
+          <div class="studio-controls">
+            <div class="btn-group">
+              <button id="styleRecStartBtn" class="btn btn-primary">
+                <span data-icon="mic" data-size="15"></span>
+                <span>Einsprechen</span>
+              </button>
+              <button id="styleRecStopBtn" class="btn btn-danger hidden">
+                <span data-icon="square" data-size="15"></span>
+                <span>Stoppen</span>
+              </button>
+            </div>
+            <button id="styleNextPromptBtn" class="btn btn-outline">
+              <span>Nächster Impuls</span>
+              <span data-icon="arrowRight" data-size="15"></span>
+            </button>
+          </div>
+          <canvas id="styleCanvas" class="waveform-canvas" width="760" height="64"></canvas>
+          <textarea id="styleTranscript" class="transcript-input" rows="4" placeholder="Sprich oder schreibe 2–4 Sätze mit Dreiklang, Anapher oder Kontrast..."></textarea>
+          <div class="card-actions-end">
+            <button id="styleCheckBtn" class="btn btn-secondary">Stilmittel prüfen &amp; speichern</button>
+          </div>
+          <div id="styleResultBox" class="subresult hidden"></div>
+        </div>
+
+        <!-- Drill C: Story of Self/Us/Now -->
+        <div id="subdrill-story" class="subdrill-panel card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Authentische Biografie</span>
+              <h2>Deine Herkunft in Präsenz übersetzen (Self · Us · Now)</h2>
+            </div>
+          </div>
+          <p class="muted-text">
+            Du brauchst nicht Obamas Herkunftsgeschichte. Forme aus <strong>deinen eigenen Erfahrungen</strong> eine glaubwürdige politische Brücke:
+          </p>
+          <div class="story-grid">
+            <div class="story-box">
+              <span class="badge badge-neutral">1. Story of Self (Ich)</span>
+              <p class="muted-text">Ein konkreter Moment aus deinem Leben, der zeigt, warum dir ein Thema wichtig ist.</p>
+              <textarea id="storySelfInput" class="transcript-input" rows="4" placeholder="Als ich in meiner Ausbildung / Nachbarschaft erlebt habe, dass..."></textarea>
+            </div>
+            <div class="story-box">
+              <span class="badge badge-neutral">2. Story of Us (Wir)</span>
+              <p class="muted-text">Was verbindet deine Erfahrung mit dem Alltag der Menschen im Raum?</p>
+              <textarea id="storyUsInput" class="transcript-input" rows="4" placeholder="Und genau dieses Gefühl kennen tausende Familien hier bei uns..."></textarea>
+            </div>
+            <div class="story-box">
+              <span class="badge badge-accent">3. Story of Now (Heute)</span>
+              <p class="muted-text">Welche Entscheidung oder Haltung forderst du genau jetzt ein?</p>
+              <textarea id="storyNowInput" class="transcript-input" rows="4" placeholder="Deshalb stehen wir heute vor der Wahl: weiter zusehen oder gemeinsam..."></textarea>
+            </div>
+          </div>
+          <div class="card-actions-between">
+            <button id="storySaveBtn" class="btn btn-outline">Entwurf speichern</button>
+            <div class="btn-group">
+              <button id="storyCombineAnalyzeBtn" class="btn btn-secondary">Entwurf rhetorisch prüfen</button>
+              <button id="storySendToTpBtn" class="btn btn-primary">
+                <span>In den Teleprompter laden</span>
+                <span data-icon="arrowRight" data-size="15"></span>
+              </button>
+            </div>
+          </div>
+          <div id="storyResultBox" class="subresult hidden"></div>
+        </div>
+
+        <!-- Drill D: Gegenwind -->
+        <div id="subdrill-gegenwind" class="subdrill-panel card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Souveränität unter Druck</span>
+              <h2>Townhall &amp; Gegenwind-Simulator</h2>
+            </div>
+            <button id="gwNextBtn" class="btn btn-primary">
+              <span data-icon="zap" data-size="15"></span>
+              <span>Neue kritische Frage</span>
+            </button>
+          </div>
+          <div class="prompt-box">
+            <span class="badge badge-danger" id="gwTagBadge">Zynismus</span>
+            <p class="prompt-main" id="gwQuestionText"></p>
+            <p class="prompt-hint" id="gwTipText"></p>
+          </div>
+          <div class="studio-controls">
+            <div class="timer-display">
+              <span class="timer-label">Antwortzeit</span>
+              <strong id="gwTimer" class="num">00:00</strong>
+            </div>
+            <div class="rec-buttons">
+              <button id="gwStartBtn" class="btn btn-primary">
+                <span data-icon="mic" data-size="15"></span>
+                <span>Ruhig atmen &amp; antworten</span>
+              </button>
+              <button id="gwStopBtn" class="btn btn-danger hidden">
+                <span data-icon="square" data-size="15"></span>
+                <span>Antwort beenden</span>
+              </button>
+            </div>
+          </div>
+          <canvas id="gwCanvas" class="waveform-canvas" width="760" height="72"></canvas>
+          <div id="gwAudioPlayback" class="audio-playback hidden"></div>
+          <textarea id="gwTranscript" class="transcript-input" rows="4" placeholder="Deine Antwort (Transkript oder Text-Entwurf)..."></textarea>
+          <div class="card-actions-end">
+            <button id="gwAnalyzeBtn" class="btn btn-secondary">Antwort auswerten &amp; speichern</button>
+          </div>
+          <div id="gwResultBox" class="subresult hidden"></div>
+        </div>
+      </section>
+
+      <!-- ================= VIEW: PLAYBOOK ================= -->
+      <section id="view-playbook" class="view">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Referenz</span>
+              <h2>Die 7 Säulen von Obamas Rhetorik &amp; Charisma</h2>
+            </div>
+          </div>
+          <div id="playbookGrid" class="playbook-grid"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
