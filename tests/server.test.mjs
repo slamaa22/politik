@@ -134,6 +134,34 @@ test('HTTP server serves static app and persists baseline, sessions, speeches, a
     }).then((r) => r.json());
     assert.equal(speechRes.speech.title, 'Testrede');
 
+    // 7b. Save lesson completion & verify bestScore tracking survives sessions reset
+    const lesson1 = await fetch(`${baseUrl}/api/lessons`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lessonId: 'lesson_01_pausen',
+        title: 'Die Obama-Sekunde',
+        passed: true,
+        score: 84,
+      }),
+    }).then((r) => r.json());
+    assert.equal(lesson1.completedLessons.lesson_01_pausen.passed, true);
+    assert.equal(lesson1.completedLessons.lesson_01_pausen.bestScore, 84);
+
+    const lesson1Retry = await fetch(`${baseUrl}/api/lessons`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lessonId: 'lesson_01_pausen',
+        title: 'Die Obama-Sekunde',
+        passed: false,
+        score: 72,
+      }),
+    }).then((r) => r.json());
+    assert.equal(lesson1Retry.completedLessons.lesson_01_pausen.passed, true);
+    assert.equal(lesson1Retry.completedLessons.lesson_01_pausen.bestScore, 84);
+    assert.equal(lesson1Retry.completedLessons.lesson_01_pausen.lastScore, 72);
+
     // 8. Reset all
     const resetRes = await fetch(`${baseUrl}/api/reset`, {
       method: 'POST',
@@ -143,6 +171,7 @@ test('HTTP server serves static app and persists baseline, sessions, speeches, a
     assert.equal(resetRes.baseline, null);
     assert.equal(resetRes.baselineProgress.stepIdx, 0);
     assert.equal(resetRes.sessions.length, 0);
+    assert.deepEqual(resetRes.completedLessons, {});
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await fs.rm(tmpDir, { recursive: true, force: true });

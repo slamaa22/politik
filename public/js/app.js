@@ -12,7 +12,9 @@ import {
   BASELINE_PARTS,
   DIMENSION_META,
   GEGENWIND_QUESTIONS,
+  LESSONS,
   PLAYBOOK_PILLARS,
+  RATED_TESTS,
   SPONTAN_TOPICS,
   STYLE_DRILLS,
   TELEPROMPTER_SPEECHES,
@@ -29,6 +31,10 @@ const VIEW_HEADERS = {
   dashboard: [
     'Profil & Trainingsplan',
     'Entwicklung vom Eingangstest bis zur souveränen politischen Präsenz.',
+  ],
+  lektionen: [
+    'Lektionen & Wertungs-Tests',
+    'Lerne strukturiert in 8 Lektionen oder absolviere offizielle Wertungs-Tests für deinen Rhetorik-Index.',
   ],
   spontanrede: [
     'Spontanrede',
@@ -58,6 +64,7 @@ const appState = {
   sessions: [],
   customSpeeches: [],
   storyDraft: { self: '', us: '', now: '' },
+  completedLessons: {},
   updatedAt: null,
 };
 
@@ -92,6 +99,8 @@ async function loadState() {
     appState.sessions = Array.isArray(data.sessions) ? data.sessions : [];
     appState.customSpeeches = Array.isArray(data.customSpeeches) ? data.customSpeeches : [];
     appState.storyDraft = data.storyDraft || { self: '', us: '', now: '' };
+    appState.completedLessons =
+      data.completedLessons && typeof data.completedLessons === 'object' ? data.completedLessons : {};
     appState.updatedAt = data.updatedAt || null;
     setSyncStatus('Auf Server gespeichert · Synchronisiert');
     return true;
@@ -204,11 +213,11 @@ function resolveSessionApplicableDims(session) {
 
 function computeCompetenceProfile() {
   const baseline = appState.baseline;
-  const sessions = appState.sessions || [];
+  const ratedSessions = (appState.sessions || []).filter((s) => s?.isRatedTest === true);
   const keys = ['tempo', 'pausen', 'dynamik', 'stilmittel', 'wirCharisma', 'klarheit'];
 
-  if (!baseline && !sessions.length) return null;
-  if (baseline && !sessions.length) {
+  if (!baseline && !ratedSessions.length) return null;
+  if (baseline && !ratedSessions.length) {
     return {
       obamaIndex: baseline.obamaIndex,
       levelLabel: baseline.levelLabel || getLevelLabel(baseline.obamaIndex),
@@ -220,32 +229,17 @@ function computeCompetenceProfile() {
   const dimensions = {};
   for (const k of keys) {
     const baseVal = baseline?.dimensions?.[k];
-    const relevant = sessions
-      .filter((s) => s?.analysis?.dimensions && Number.isFinite(s.analysis.dimensions[k]))
-      .filter((s) => resolveSessionApplicableDims(s).includes(k))
-      .slice(0, 4);
+    const newestRated = ratedSessions.find(
+      (s) =>
+        s?.analysis?.dimensions &&
+        Number.isFinite(s.analysis.dimensions[k]) &&
+        resolveSessionApplicableDims(s).includes(k)
+    );
 
-    if (!relevant.length) {
-      dimensions[k] = Number.isFinite(baseVal) ? baseVal : 65;
-      continue;
-    }
-
-    // Recency-weighted average of relevant sessions for this dimension only
-    let wSum = 0;
-    let vSum = 0;
-    relevant.forEach((s, idx) => {
-      const w = 1 / (idx + 1);
-      wSum += w;
-      vSum += s.analysis.dimensions[k] * w;
-    });
-    const recentAvg = vSum / wSum;
-
-    if (Number.isFinite(baseVal)) {
-      // Smooth gradual shift from fixed Startwert (max 45% after 3+ relevant sessions)
-      const sessionWeight = Math.min(0.45, relevant.length * 0.15);
-      dimensions[k] = Math.round(baseVal * (1 - sessionWeight) + recentAvg * sessionWeight);
+    if (newestRated) {
+      dimensions[k] = newestRated.analysis.dimensions[k];
     } else {
-      dimensions[k] = Math.round(recentAvg);
+      dimensions[k] = Number.isFinite(baseVal) ? baseVal : 65;
     }
   }
 
@@ -524,6 +518,14 @@ function updateTopbarAndNav() {
 
   const profile = computeCompetenceProfile();
   topIndex.textContent = profile ? `${profile.obamaIndex}/100` : '—';
+
+  const navLessonsBadge = document.getElementById('navLessonsBadge');
+  if (navLessonsBadge) {
+    const passedLessons = LESSONS.filter((l) => appState.completedLessons?.[l.id]?.passed).length;
+    navLessonsBadge.textContent = `${passedLessons}/${LESSONS.length}`;
+    navLessonsBadge.classList.toggle('badge-accent', passedLessons === LESSONS.length);
+    navLessonsBadge.classList.toggle('badge-neutral', passedLessons < LESSONS.length);
+  }
 }
 
 // ================= MODULE 0: EINGANGSTEST =================
@@ -899,19 +901,21 @@ function renderDashboard() {
 
   const profile = computeCompetenceProfile();
   const baseline = appState.baseline;
-  const latestSession = appState.sessions[0];
+  const ratedSessions = (appState.sessions || []).filter((s) => s?.isRatedTest === true);
 
   document.getElementById('dashCurrentScore').textContent = profile ? `${profile.obamaIndex}/100` : '—';
   document.getElementById('dashCurrentLevel').textContent = profile ? profile.levelLabel : 'Eingangstest starten';
 
   document.getElementById('dashBaselineScore').textContent = baseline ? `${baseline.obamaIndex}/100` : '—';
-  if (baseline && profile && latestSession) {
+  if (baseline && profile && ratedSessions.length > 0) {
     const delta = profile.obamaIndex - baseline.obamaIndex;
     const sign = delta >= 0 ? `+${delta}` : `${delta}`;
     document.getElementById('dashDeltaText').textContent =
-      `${sign} vs. Start · Letzte Übung: ${latestSession.analysis?.obamaIndex ?? '—'}/100`;
+      `${sign} vs. Start · Letzter Wertungs-Test: ${ratedSessions[0].analysis?.obamaIndex ?? '—'}/100`;
   } else {
-    document.getElementById('dashDeltaText').textContent = baseline ? 'Startwert (fix)' : 'Noch kein Test';
+    document.getElementById('dashDeltaText').textContent = baseline
+      ? 'Startwert (fix) · Noch kein Wertungs-Test'
+      : 'Noch kein Test';
   }
 
   document.getElementById('dashSessionCount').textContent = String(appState.sessions.length);
@@ -928,11 +932,11 @@ function renderDashboard() {
     renderRadarChart(
       document.getElementById('dashRadarContainer'),
       profile.dimensions,
-      baseline && appState.sessions.length > 0 ? baseline.dimensions : null
+      baseline && ratedSessions.length > 0 ? baseline.dimensions : null
     );
   } else {
     document.getElementById('dashRadarContainer').innerHTML =
-      '<p class="muted-text">Schließe den Eingangstest oder eine erste Übung ab, um dein Radar zu sehen.</p>';
+      '<p class="muted-text">Schließe den Eingangstest oder einen Wertungs-Test ab, um dein Radar zu sehen.</p>';
   }
 
   const plan = profile?.dimensions
@@ -970,6 +974,9 @@ function renderDashboard() {
           hour: '2-digit',
           minute: '2-digit',
         });
+        const ratedBadge = s.isRatedTest
+          ? `<span class="badge badge-accent">Wertungs-Test</span>`
+          : '';
         return `
           <div class="history-row">
             <div>
@@ -978,6 +985,7 @@ function renderDashboard() {
               ${s.audioUrl ? `<div class="audio-playback"><audio controls preload="none" src="${s.audioUrl}"></audio></div>` : ''}
             </div>
             <div class="btn-group">
+              ${ratedBadge}
               <span class="badge badge-neutral num">${s.analysis?.obamaIndex ?? '—'}/100</span>
               <button type="button" class="btn btn-outline btn-sm" data-delete-session="${s.id}" title="Einheit löschen" aria-label="Einheit löschen">
                 ${icon('trash', 13)}
@@ -1533,16 +1541,16 @@ function initWordChallengeView() {
 
 // ================= MODULE 5: OBAMA DRILLS =================
 function switchSubdrill(name) {
-  document.querySelectorAll('.subtab').forEach((t) => {
+  document.querySelectorAll('#view-drills .subtab').forEach((t) => {
     t.classList.toggle('active', t.dataset.subdrill === name);
   });
-  document.querySelectorAll('.subdrill-panel').forEach((p) => {
+  document.querySelectorAll('#view-drills .subdrill-panel').forEach((p) => {
     p.classList.toggle('active', p.id === `subdrill-${name}`);
   });
 }
 
 function initDrillsView() {
-  document.querySelectorAll('.subtab').forEach((tab) => {
+  document.querySelectorAll('#view-drills .subtab').forEach((tab) => {
     tab.addEventListener('click', () => switchSubdrill(tab.dataset.subdrill));
   });
 
@@ -1893,6 +1901,575 @@ function initDrillsView() {
   document.getElementById('gwAnalyzeBtn').addEventListener('click', finishGegenwind);
 }
 
+// ================= MODULE 5.5: LEKTIONEN & WERTUNGS-TESTS =================
+const lektionenState = {
+  activeLessonId: LESSONS[0]?.id || '',
+  lessonRecorder: null,
+  lessonLastRec: null,
+  activeTestId: RATED_TESTS[0]?.id || '',
+  testRecorder: null,
+  testLastRec: null,
+};
+
+function getRatedTestHistory(testId) {
+  return (appState.sessions || []).filter((s) => s?.isRatedTest === true && s.testId === testId);
+}
+
+function evaluateLessonCriteria(lesson, analysis) {
+  const rule = lesson.passRule || {};
+  const checks = [];
+
+  if (Number.isFinite(rule.minScore)) {
+    checks.push({
+      label: `Gesamtwertung mindestens ${rule.minScore}/100 (erreicht: ${analysis.obamaIndex}/100)`,
+      passed: analysis.obamaIndex >= rule.minScore,
+    });
+  }
+  if (Number.isFinite(rule.minPauses)) {
+    const ok = analysis.audio.hasAudio && analysis.audio.strategicPauses >= rule.minPauses;
+    checks.push({
+      label: analysis.audio.hasAudio
+        ? `Mindestens ${rule.minPauses} Wirkungspausen (erkannt: ${analysis.audio.strategicPauses})`
+        : `Mindestens ${rule.minPauses} Wirkungspausen (Mikrofonaufnahme erforderlich)`,
+      passed: ok,
+    });
+  }
+  if (Number.isFinite(rule.wpmMin) && Number.isFinite(rule.wpmMax)) {
+    const ok = analysis.wpm !== null && analysis.wpm >= rule.wpmMin && analysis.wpm <= rule.wpmMax;
+    checks.push({
+      label:
+        analysis.wpm !== null
+          ? `Sprechtempo ${rule.wpmMin}–${rule.wpmMax} WPM (gemessen: ${analysis.wpm} WPM)`
+          : `Sprechtempo ${rule.wpmMin}–${rule.wpmMax} WPM (Mikrofonaufnahme erforderlich)`,
+      passed: ok,
+    });
+  }
+  if (Number.isFinite(rule.minDevices)) {
+    checks.push({
+      label: `Mindestens ${rule.minDevices} rhetorisches Stilmittel (erkannt: ${analysis.devices.totalDevices})`,
+      passed: analysis.devices.totalDevices >= rule.minDevices,
+    });
+  }
+  if (Number.isFinite(rule.minWeCount)) {
+    checks.push({
+      label: `Mindestens ${rule.minWeCount}× „Wir / Uns / Unser“ (erkannt: ${analysis.weCount}×)`,
+      passed: analysis.weCount >= rule.minWeCount,
+    });
+  }
+  if (Number.isFinite(rule.maxFillers)) {
+    checks.push({
+      label: `Maximal ${rule.maxFillers} Füllwort (erkannt: ${analysis.fillers.totalCount})`,
+      passed: analysis.fillers.totalCount <= rule.maxFillers,
+    });
+  }
+  if (lesson.mandatoryWords?.length) {
+    const allMatched = analysis.mandatoryMatchedCount === lesson.mandatoryWords.length;
+    checks.push({
+      label: `Alle ${lesson.mandatoryWords.length} Pflichtwörter integriert (${analysis.mandatoryMatchedCount}/${lesson.mandatoryWords.length})`,
+      passed: allMatched,
+    });
+  }
+
+  return {
+    passed: checks.every((c) => c.passed),
+    checks,
+  };
+}
+
+function renderLessonsGrid() {
+  const grid = document.getElementById('lessonSelectorGrid');
+  if (!grid) return;
+
+  const passedCount = LESSONS.filter((l) => appState.completedLessons?.[l.id]?.passed).length;
+  const pct = LESSONS.length ? Math.round((passedCount / LESSONS.length) * 100) : 0;
+
+  const badgeEl = document.getElementById('lessonProgressBadge');
+  if (badgeEl) {
+    badgeEl.textContent = `${passedCount} / ${LESSONS.length} bestanden`;
+    badgeEl.classList.toggle('badge-accent', passedCount === LESSONS.length);
+    badgeEl.classList.toggle('badge-neutral', passedCount < LESSONS.length);
+  }
+  const fillEl = document.getElementById('lessonProgressFill');
+  if (fillEl) fillEl.style.width = `${pct}%`;
+
+  grid.innerHTML = LESSONS.map((lesson) => {
+    const rec = appState.completedLessons?.[lesson.id];
+    const isActive = lesson.id === lektionenState.activeLessonId;
+    const isPassed = Boolean(rec?.passed);
+    const dimLabel = DIMENSION_META[lesson.dimension]?.short || lesson.dimension;
+    const statusChip = isPassed
+      ? `<span class="badge badge-accent num">${icon('checkCircle', 12)} <span>${rec.bestScore || '—'}/100</span></span>`
+      : rec
+        ? `<span class="badge badge-neutral num">${rec.lastScore || '—'}/100</span>`
+        : `<span class="badge badge-neutral">Offen</span>`;
+
+    return `
+      <button type="button" class="lesson-card ${isActive ? 'active' : ''}" data-select-lesson="${lesson.id}">
+        <div class="lesson-card-top">
+          <span class="eyebrow num">Lektion ${lesson.num}</span>
+          ${statusChip}
+        </div>
+        <div class="lesson-card-title">${lesson.title}</div>
+        <div class="lesson-card-meta">${dimLabel} · ${lesson.durationSec}s</div>
+      </button>`;
+  }).join('');
+}
+
+function renderActiveLesson() {
+  const lesson = LESSONS.find((l) => l.id === lektionenState.activeLessonId) || LESSONS[0];
+  if (!lesson) return;
+  lektionenState.activeLessonId = lesson.id;
+
+  const dimLabel = DIMENSION_META[lesson.dimension]?.label || lesson.dimension;
+  const record = appState.completedLessons?.[lesson.id];
+
+  document.getElementById('lessonEyebrow').textContent = `Lektion ${lesson.num} · ${dimLabel}`;
+  document.getElementById('lessonTitle').textContent = lesson.title;
+  document.getElementById('lessonSummary').textContent = lesson.summary;
+  document.getElementById('lessonTheory').textContent = lesson.theory;
+  document.getElementById('lessonExBefore').textContent = `Vorher: ${lesson.exampleBefore}`;
+  document.getElementById('lessonExAfter').textContent = `Ziel: ${lesson.exampleAfter}`;
+  document.getElementById('lessonTaskPrompt').textContent = lesson.taskPrompt;
+  document.getElementById('lessonTargetTime').textContent = `/ ${formatTime(lesson.durationSec)}`;
+  document.getElementById('lessonTimer').textContent = '00:00';
+
+  const statusBadge = document.getElementById('lessonStatusBadge');
+  if (record?.passed) {
+    statusBadge.innerHTML = `${icon('checkCircle', 12)} <span>Bestanden (${record.bestScore}/100)</span>`;
+    statusBadge.classList.add('badge-accent');
+    statusBadge.classList.remove('badge-neutral');
+  } else if (record) {
+    statusBadge.textContent = `Letzter Versuch: ${record.lastScore}/100`;
+    statusBadge.classList.remove('badge-accent');
+    statusBadge.classList.add('badge-neutral');
+  } else {
+    statusBadge.textContent = 'Offen';
+    statusBadge.classList.remove('badge-accent');
+    statusBadge.classList.add('badge-neutral');
+  }
+
+  const readWrap = document.getElementById('lessonReadWrap');
+  if (lesson.referenceText) {
+    readWrap.classList.remove('hidden');
+    readWrap.innerHTML = formatCuedSpeechHtml(lesson.referenceText);
+  } else {
+    readWrap.classList.add('hidden');
+    readWrap.innerHTML = '';
+  }
+
+  const wordsWrap = document.getElementById('lessonWordsWrap');
+  if (lesson.mandatoryWords?.length) {
+    wordsWrap.classList.remove('hidden');
+    updateLessonWordChips(document.getElementById('lessonTranscript').value);
+  } else {
+    wordsWrap.classList.add('hidden');
+    wordsWrap.innerHTML = '';
+  }
+
+  document.getElementById('lessonChecklist').innerHTML = (lesson.checklist || [])
+    .map(
+      (item) => `<div class="checklist-item">${icon('circle', 13)} <span>${item}</span></div>`
+    )
+    .join('');
+
+  renderLessonsGrid();
+}
+
+function updateLessonWordChips(text) {
+  const lesson = LESSONS.find((l) => l.id === lektionenState.activeLessonId);
+  const wordsWrap = document.getElementById('lessonWordsWrap');
+  if (!lesson?.mandatoryWords?.length || !wordsWrap) return;
+  const check = matchMandatoryWords(text, lesson.mandatoryWords);
+  wordsWrap.innerHTML = check
+    .map(
+      (m) =>
+        `<span class="word-chip ${m.matched ? 'matched' : ''}">${icon(m.matched ? 'check' : 'circle', 13)} <span>${m.word}</span></span>`
+    )
+    .join('');
+}
+
+function renderRatedTestsGrid() {
+  const grid = document.getElementById('ratedTestSelectorGrid');
+  if (!grid) return;
+
+  const takenCount = RATED_TESTS.filter((t) => getRatedTestHistory(t.id).length > 0).length;
+  const badgeEl = document.getElementById('ratedTestProgressBadge');
+  if (badgeEl) {
+    badgeEl.textContent = `${takenCount} / ${RATED_TESTS.length} abgelegt`;
+    badgeEl.classList.toggle('badge-accent', takenCount === RATED_TESTS.length);
+    badgeEl.classList.toggle('badge-neutral', takenCount < RATED_TESTS.length);
+  }
+
+  grid.innerHTML = RATED_TESTS.map((test) => {
+    const history = getRatedTestHistory(test.id);
+    const latest = history[0];
+    const isActive = test.id === lektionenState.activeTestId;
+    const latestScore = latest?.analysis?.obamaIndex;
+    const passed = Number.isFinite(latestScore) && latestScore >= test.passScore;
+
+    const statusChip = latest
+      ? `<span class="badge ${passed ? 'badge-accent' : 'badge-neutral'} num">${latestScore}/100</span>`
+      : `<span class="badge badge-neutral num">Ziel ${test.passScore}</span>`;
+
+    return `
+      <button type="button" class="lesson-card ${isActive ? 'active' : ''}" data-select-test="${test.id}">
+        <div class="lesson-card-top">
+          <span class="eyebrow">${test.num}</span>
+          ${statusChip}
+        </div>
+        <div class="lesson-card-title">${test.title}</div>
+        <div class="lesson-card-meta">${test.dimensionsLabel}</div>
+      </button>`;
+  }).join('');
+}
+
+function renderActiveRatedTest() {
+  const test = RATED_TESTS.find((t) => t.id === lektionenState.activeTestId) || RATED_TESTS[0];
+  if (!test) return;
+  lektionenState.activeTestId = test.id;
+
+  document.getElementById('ratedTestEyebrow').textContent = `${test.num} · Offizielle Wertung`;
+  document.getElementById('ratedTestTitle').textContent = test.title;
+  document.getElementById('ratedTestTargetBadge').textContent = `Bestehen ab ${test.passScore}/100`;
+  document.getElementById('ratedTestDesc').textContent = test.description;
+  document.getElementById('ratedTestDimsLabel').textContent = `Geprüfte Dimensionen: ${test.dimensionsLabel}`;
+  document.getElementById('ratedTestPrompt').textContent = test.prompt;
+  document.getElementById('ratedTestTargetTime').textContent = `/ ${formatTime(test.durationSec)}`;
+  document.getElementById('ratedTestTimer').textContent = '00:00';
+
+  const readWrap = document.getElementById('ratedTestReadWrap');
+  if (test.referenceText) {
+    readWrap.classList.remove('hidden');
+    readWrap.innerHTML = formatCuedSpeechHtml(test.referenceText);
+  } else {
+    readWrap.classList.add('hidden');
+    readWrap.innerHTML = '';
+  }
+
+  const wordsWrap = document.getElementById('ratedTestWordsWrap');
+  if (test.mandatoryWords?.length) {
+    wordsWrap.classList.remove('hidden');
+    updateRatedTestWordChips(document.getElementById('ratedTestTranscript').value);
+  } else {
+    wordsWrap.classList.add('hidden');
+    wordsWrap.innerHTML = '';
+  }
+
+  renderRatedTestsGrid();
+}
+
+function updateRatedTestWordChips(text) {
+  const test = RATED_TESTS.find((t) => t.id === lektionenState.activeTestId);
+  const wordsWrap = document.getElementById('ratedTestWordsWrap');
+  if (!test?.mandatoryWords?.length || !wordsWrap) return;
+  const check = matchMandatoryWords(text, test.mandatoryWords);
+  wordsWrap.innerHTML = check
+    .map(
+      (m) =>
+        `<span class="word-chip ${m.matched ? 'matched' : ''}">${icon(m.matched ? 'check' : 'circle', 13)} <span>${m.word}</span></span>`
+    )
+    .join('');
+}
+
+function switchSublektion(name) {
+  document.querySelectorAll('#view-lektionen .subtab').forEach((t) => {
+    t.classList.toggle('active', t.dataset.sublektion === name);
+  });
+  document.querySelectorAll('#view-lektionen .sublektion-panel').forEach((p) => {
+    p.classList.toggle('active', p.id === `sublektion-${name}`);
+  });
+}
+
+function initLektionenView() {
+  document.querySelectorAll('#view-lektionen .subtab').forEach((tab) => {
+    tab.addEventListener('click', () => switchSublektion(tab.dataset.sublektion));
+  });
+
+  // --- Lessons selector & studio ---
+  document.getElementById('lessonSelectorGrid').addEventListener('click', (e) => {
+    const card = e.target.closest('[data-select-lesson]');
+    if (!card || lektionenState.lessonRecorder?.isRecording) return;
+    lektionenState.activeLessonId = card.dataset.selectLesson;
+    lektionenState.lessonLastRec = null;
+    document.getElementById('lessonTranscript').value = '';
+    document.getElementById('lessonSpeechNotice').classList.add('hidden');
+    document.getElementById('lessonAudioPlayback').classList.add('hidden');
+    document.getElementById('lessonResultBox').classList.add('hidden');
+    renderActiveLesson();
+  });
+
+  const lessonTranscriptEl = document.getElementById('lessonTranscript');
+  lessonTranscriptEl.addEventListener('input', () => {
+    updateLessonWordChips(lessonTranscriptEl.value);
+  });
+
+  const lessonStartBtn = document.getElementById('lessonStartBtn');
+  const lessonStopBtn = document.getElementById('lessonStopBtn');
+  const lessonNoticeEl = document.getElementById('lessonSpeechNotice');
+  const lessonAmpelEl = document.getElementById('lessonAmpel');
+
+  lessonStartBtn.addEventListener('click', async () => {
+    lessonNoticeEl.classList.add('hidden');
+    lektionenState.lessonLastRec = null;
+    const rec = new SpeechStudioRecorder({
+      canvas: document.getElementById('lessonCanvas'),
+      onTranscript: (text) => {
+        lessonTranscriptEl.value = text;
+        updateLessonWordChips(text);
+      },
+      onTick: ({ elapsed }) => {
+        document.getElementById('lessonTimer').textContent = formatTime(elapsed);
+        const rms = rec.samples[rec.samples.length - 1]?.rms || 0;
+        updateAmpel(lessonAmpelEl, rms, rec.samples);
+      },
+      onSpeechError: (msg) => {
+        lessonNoticeEl.textContent = msg;
+        lessonNoticeEl.classList.remove('hidden');
+      },
+    });
+    try {
+      await rec.start();
+      lektionenState.lessonRecorder = rec;
+      lessonStartBtn.classList.add('hidden');
+      lessonStopBtn.classList.remove('hidden');
+    } catch (err) {
+      lessonNoticeEl.textContent = `${err.message} — Du kannst deine Antwort auch unten direkt eingeben.`;
+      lessonNoticeEl.classList.remove('hidden');
+    }
+  });
+
+  const evaluateLesson = async () => {
+    if (lektionenState.lessonRecorder?.isRecording) {
+      lektionenState.lessonLastRec = await lektionenState.lessonRecorder.stop();
+      renderAudioPlayback(document.getElementById('lessonAudioPlayback'), lektionenState.lessonLastRec.audioUrl);
+    }
+    lessonStartBtn.classList.remove('hidden');
+    lessonStopBtn.classList.add('hidden');
+
+    const lesson = LESSONS.find((l) => l.id === lektionenState.activeLessonId) || LESSONS[0];
+    const rec = lektionenState.lessonLastRec;
+    if (rec) {
+      lessonAmpelEl.querySelector('.ampel-text').textContent = 'Transkribiere...';
+      await autoTranscribeIfNeeded(rec, {
+        transcriptEl: lessonTranscriptEl,
+        noticeEl: lessonNoticeEl,
+        onText: updateLessonWordChips,
+        statusBtn: document.getElementById('lessonEvaluateBtn'),
+      });
+      lessonAmpelEl.querySelector('.ampel-text').textContent = 'Aufnahme beendet';
+    }
+
+    let text = lessonTranscriptEl.value.trim();
+    const hasTranscript = Boolean(text);
+    if (!text && lesson.referenceText && rec && rec.durationSec >= 5) {
+      text = lesson.referenceText;
+    }
+    if (!text && (!rec || rec.durationSec < 3)) {
+      alert('Bitte sprich zuerst deine Antwort ein oder gib einen Text ein.');
+      return;
+    }
+
+    const analysis = analyzeSpeech({
+      text,
+      durationSec: rec?.durationSec || 0,
+      audioSamples: rec?.samples || [],
+      mandatoryWords: lesson.mandatoryWords || [],
+      mode: lesson.mode,
+      referenceText: lesson.referenceText || null,
+      hasTranscript,
+    });
+
+    const outcome = evaluateLessonCriteria(lesson, analysis);
+    const savedState = await apiPost('/api/lessons', {
+      lessonId: lesson.id,
+      title: lesson.title,
+      passed: outcome.passed,
+      score: analysis.obamaIndex,
+    });
+    if (savedState?.completedLessons) {
+      appState.completedLessons = savedState.completedLessons;
+    } else {
+      const prev = appState.completedLessons[lesson.id];
+      appState.completedLessons[lesson.id] = {
+        lessonId: lesson.id,
+        title: lesson.title,
+        passed: outcome.passed || Boolean(prev?.passed),
+        bestScore: Math.max(Number(prev?.bestScore || 0), analysis.obamaIndex),
+        lastScore: analysis.obamaIndex,
+      };
+    }
+
+    updateTopbarAndNav();
+    renderActiveLesson();
+
+    const resultBox = document.getElementById('lessonResultBox');
+    resultBox.classList.remove('hidden');
+    const summaryBanner = document.createElement('div');
+    summaryBanner.className = outcome.passed ? 'callout callout-accent' : 'callout callout-warn';
+    summaryBanner.innerHTML = `
+      <span>
+        <strong>${outcome.passed ? `Lektion ${lesson.num} bestanden!` : `Noch nicht alle Kriterien erfüllt:`}</strong>
+        Dein Startwert (Baseline) bleibt unverändert.
+      </span>`;
+    const checkHtml = `<div class="checklist-box">${outcome.checks
+      .map(
+        (c) =>
+          `<div class="checklist-item ${c.passed ? 'passed' : ''}">${icon(c.passed ? 'check' : 'x', 14)} <span>${c.label}</span></div>`
+      )
+      .join('')}</div>`;
+    const analysisHost = document.createElement('div');
+    renderAnalysisCard(analysisHost, `Lektion ${lesson.num}: ${lesson.title}`, analysis);
+    resultBox.innerHTML = '';
+    resultBox.appendChild(summaryBanner);
+    resultBox.insertAdjacentHTML('beforeend', checkHtml);
+    resultBox.insertAdjacentHTML('beforeend', analysisHost.innerHTML);
+  };
+
+  lessonStopBtn.addEventListener('click', evaluateLesson);
+  document.getElementById('lessonEvaluateBtn').addEventListener('click', evaluateLesson);
+
+  // --- Rated tests selector & studio ---
+  document.getElementById('ratedTestSelectorGrid').addEventListener('click', (e) => {
+    const card = e.target.closest('[data-select-test]');
+    if (!card || lektionenState.testRecorder?.isRecording) return;
+    lektionenState.activeTestId = card.dataset.selectTest;
+    lektionenState.testLastRec = null;
+    document.getElementById('ratedTestTranscript').value = '';
+    document.getElementById('ratedTestSpeechNotice').classList.add('hidden');
+    document.getElementById('ratedTestAudioPlayback').classList.add('hidden');
+    document.getElementById('ratedTestResultBox').classList.add('hidden');
+    renderActiveRatedTest();
+  });
+
+  const testTranscriptEl = document.getElementById('ratedTestTranscript');
+  testTranscriptEl.addEventListener('input', () => {
+    updateRatedTestWordChips(testTranscriptEl.value);
+  });
+
+  const testStartBtn = document.getElementById('ratedTestStartBtn');
+  const testStopBtn = document.getElementById('ratedTestStopBtn');
+  const testNoticeEl = document.getElementById('ratedTestSpeechNotice');
+  const testAmpelEl = document.getElementById('ratedTestAmpel');
+
+  testStartBtn.addEventListener('click', async () => {
+    testNoticeEl.classList.add('hidden');
+    lektionenState.testLastRec = null;
+    const rec = new SpeechStudioRecorder({
+      canvas: document.getElementById('ratedTestCanvas'),
+      onTranscript: (text) => {
+        testTranscriptEl.value = text;
+        updateRatedTestWordChips(text);
+      },
+      onTick: ({ elapsed }) => {
+        document.getElementById('ratedTestTimer').textContent = formatTime(elapsed);
+        const rms = rec.samples[rec.samples.length - 1]?.rms || 0;
+        updateAmpel(testAmpelEl, rms, rec.samples);
+      },
+      onSpeechError: (msg) => {
+        testNoticeEl.textContent = msg;
+        testNoticeEl.classList.remove('hidden');
+      },
+    });
+    try {
+      await rec.start();
+      lektionenState.testRecorder = rec;
+      testStartBtn.classList.add('hidden');
+      testStopBtn.classList.remove('hidden');
+    } catch (err) {
+      testNoticeEl.textContent = `${err.message} — Du kannst deinen Prüfungstext auch unten eingeben.`;
+      testNoticeEl.classList.remove('hidden');
+    }
+  });
+
+  const evaluateRatedTest = async () => {
+    if (lektionenState.testRecorder?.isRecording) {
+      lektionenState.testLastRec = await lektionenState.testRecorder.stop();
+      renderAudioPlayback(document.getElementById('ratedTestAudioPlayback'), lektionenState.testLastRec.audioUrl);
+    }
+    testStartBtn.classList.remove('hidden');
+    testStopBtn.classList.add('hidden');
+
+    const test = RATED_TESTS.find((t) => t.id === lektionenState.activeTestId) || RATED_TESTS[0];
+    const rec = lektionenState.testLastRec;
+    if (rec) {
+      testAmpelEl.querySelector('.ampel-text').textContent = 'Transkribiere...';
+      await autoTranscribeIfNeeded(rec, {
+        transcriptEl: testTranscriptEl,
+        noticeEl: testNoticeEl,
+        onText: updateRatedTestWordChips,
+        statusBtn: document.getElementById('ratedTestEvaluateBtn'),
+      });
+      testAmpelEl.querySelector('.ampel-text').textContent = 'Aufnahme beendet';
+    }
+
+    let text = testTranscriptEl.value.trim();
+    const hasTranscript = Boolean(text);
+    if (!text && test.referenceText && rec && rec.durationSec >= 5) {
+      text = test.referenceText;
+    }
+    if (!text && (!rec || rec.durationSec < 3)) {
+      alert('Bitte nimm deine Prüfungsrede per Mikrofon auf oder gib deinen Text ein.');
+      return;
+    }
+
+    const prevIndex = computeCompetenceProfile()?.obamaIndex ?? null;
+    const analysis = analyzeSpeech({
+      text,
+      durationSec: rec?.durationSec || 0,
+      audioSamples: rec?.samples || [],
+      mandatoryWords: test.mandatoryWords || [],
+      mode: test.mode,
+      referenceText: test.referenceText || null,
+      hasTranscript,
+    });
+
+    const audioUrl = rec ? await uploadAudioRecording(rec) : null;
+    if (audioUrl) {
+      renderAudioPlayback(document.getElementById('ratedTestAudioPlayback'), audioUrl);
+    }
+
+    const passed = analysis.obamaIndex >= test.passScore;
+    await saveSession({
+      type: test.mode,
+      testId: test.id,
+      isRatedTest: true,
+      passed,
+      title: `Wertungs-Test: ${test.title}`,
+      analysis,
+      audioUrl,
+      transcript: text,
+    });
+
+    const nextIndex = computeCompetenceProfile()?.obamaIndex ?? analysis.obamaIndex;
+    const delta = prevIndex !== null ? nextIndex - prevIndex : 0;
+    const deltaSign = delta > 0 ? `+${delta}` : `${delta}`;
+    const baseText = appState.baseline ? ` · Startwert bleibt ${appState.baseline.obamaIndex}/100` : '';
+
+    renderRatedTestsGrid();
+
+    const resultBox = document.getElementById('ratedTestResultBox');
+    resultBox.classList.remove('hidden');
+    const indexBanner = document.createElement('div');
+    indexBanner.className = passed ? 'callout callout-accent' : 'callout';
+    indexBanner.innerHTML = `
+      <span>
+        <strong>${passed ? `${test.num} bestanden!` : `${test.num} gewertet`}</strong> —
+        Aktueller Rhetorik-Index aktualisiert: ${prevIndex !== null ? `${prevIndex} → ` : ''}<strong>${nextIndex}/100</strong>${prevIndex !== null ? ` (${deltaSign})` : ''}${baseText}.
+      </span>`;
+    const analysisHost = document.createElement('div');
+    renderAnalysisCard(analysisHost, `${test.num}: ${test.title}`, analysis);
+    resultBox.innerHTML = '';
+    resultBox.appendChild(indexBanner);
+    resultBox.insertAdjacentHTML('beforeend', analysisHost.innerHTML);
+  };
+
+  testStopBtn.addEventListener('click', evaluateRatedTest);
+  document.getElementById('ratedTestEvaluateBtn').addEventListener('click', evaluateRatedTest);
+
+  renderActiveLesson();
+  renderActiveRatedTest();
+}
+
 // ================= MODULE 6: PLAYBOOK =================
 function renderPlaybook() {
   document.getElementById('playbookGrid').innerHTML = PLAYBOOK_PILLARS.map(
@@ -1939,7 +2516,9 @@ function isAnyRecordingActive() {
     baselineState.recorder?.isRecording ||
       spontanRecorder?.isRecording ||
       tpRecorder?.isRecording ||
-      wcState.recorder?.isRecording
+      wcState.recorder?.isRecording ||
+      lektionenState.lessonRecorder?.isRecording ||
+      lektionenState.testRecorder?.isRecording
   );
 }
 
@@ -1957,6 +2536,8 @@ async function syncFromServer() {
   if (selfInput && document.activeElement !== selfInput) selfInput.value = appState.storyDraft.self || '';
   if (usInput && document.activeElement !== usInput) usInput.value = appState.storyDraft.us || '';
   if (nowInput && document.activeElement !== nowInput) nowInput.value = appState.storyDraft.now || '';
+  renderActiveLesson();
+  renderActiveRatedTest();
   updateTopbarAndNav();
   renderDashboard();
 }
@@ -1970,7 +2551,7 @@ async function bootstrap() {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
   });
 
-  document.body.addEventListener('click', (e) => {
+  document.body.addEventListener('click', async (e) => {
     const jump = e.target.closest('[data-jump]');
     if (jump) switchView(jump.dataset.jump);
 
@@ -1984,7 +2565,8 @@ async function bootstrap() {
 
     const delSession = e.target.closest('[data-delete-session]');
     if (delSession) {
-      deleteSession(delSession.dataset.deleteSession);
+      await deleteSession(delSession.dataset.deleteSession);
+      renderRatedTestsGrid();
     }
   });
 
@@ -1999,14 +2581,16 @@ async function bootstrap() {
   });
 
   document.getElementById('clearHistoryBtn').addEventListener('click', async () => {
-    if (!confirm('Trainings-Logbuch wirklich leeren? Dein Eingangstest-Startwert bleibt erhalten.')) return;
+    if (!confirm('Trainings-Logbuch & Wertungs-Tests wirklich leeren? Dein Eingangstest-Startwert und abgeschlossene Lektionen bleiben erhalten.')) return;
     appState.sessions = [];
     await apiPost('/api/reset', { scope: 'sessions' });
+    renderRatedTestsGrid();
     updateTopbarAndNav();
     renderDashboard();
   });
 
   initBaselineView();
+  initLektionenView();
   initSpontanView();
   initTeleprompterView();
   initWordChallengeView();

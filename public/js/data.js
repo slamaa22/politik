@@ -122,6 +122,56 @@ export const SPONTAN_TOPICS = [
     topic: 'Warum ein moderner, schneller Staat die beste Werbung für unsere Demokratie ist.',
     angle: 'Konkretes Alltagsbeispiel (Bürgeramt/Formular) → großes Prinzip (Vertrauen).',
   },
+  {
+    category: 'Europa & Sicherheit',
+    topic: 'Warum ein starkes, handlungsfähiges Europa keine abstrakte Idee, sondern unsere Lebensversicherung ist.',
+    angle: 'Erkläre Europa nicht über Institutionen, sondern über Frieden, Reisefreiheit und gemeinsame Stärke.',
+  },
+  {
+    category: 'Europa & Sicherheit',
+    topic: 'Innere Sicherheit und Freiheit: Wie schützen wir unsere offene Gesellschaft ohne Aktionismus?',
+    angle: 'Vermeide Härte-Posen; verbinde klaren Rechtsstaat mit Prävention und Respekt für Einsatzkräfte.',
+  },
+  {
+    category: 'Medien & Öffentlichkeit',
+    topic: 'Wut-Algorithmen vs. echte Debatte: Wie gewinnt man Aufmerksamkeit mit Vernunft statt Empörung?',
+    angle: 'Nutze eine klare Antithese: „Lautstärke erzeugt Klicks – aber Haltung erzeugt Vertrauen.“',
+  },
+  {
+    category: 'Bildung & Jugend',
+    topic: 'Junge Menschen zwischen Zukunftsangst und Mitgestaltung: Warum gehört unsere Generation an den Verhandlungstisch?',
+    angle: 'Verwandle ein persönliches Jugend-Erlebnis (Story of Self) in eine Einladung an alle Generationen.',
+  },
+  {
+    category: 'Kommunalpolitik',
+    topic: 'Vereinsleben, Ehrenamt und Feuerwehr: Was passiert mit einer Stadt, wenn niemand mehr mitmacht?',
+    angle: 'Male zuerst das stille Szenario ohne Ehrenamt – und setze dann deinen Dank als Dreiklang.',
+  },
+  {
+    category: 'Wirtschaft & Arbeit',
+    topic: 'Bürokratieabbau für Handwerk und Mittelstand: Wie geben wir Menschen wieder Zeit für echte Arbeit?',
+    angle: 'Nenne eine konkrete Alltagshürde beim Namen und führe in 3 Schritten zur Lösung.',
+  },
+  {
+    category: 'Demokratie & Zusammenhalt',
+    topic: 'Extremismus von rechts, links oder religiösem Fanatismus: Wie verteidigen wir die Mitte der Gesellschaft?',
+    angle: 'Klare Kante gegen Spalter, gefolgt von einer konstruktiven Vision für Zusammenhalt.',
+  },
+  {
+    category: 'Gesundheit & Pflege',
+    topic: 'Einsamkeit im Alter und Druck auf Familien: Wie organisieren wir echte Nachbarschaftshilfe?',
+    angle: 'Stelle eine persönliche Beobachtung an den Anfang und beende mit einem „Wir“-Appell.',
+  },
+  {
+    category: 'Klima & Transformation',
+    topic: 'Technologieoffenheit und Innovation statt Verbotsspirale: Wie begeistern wir für grünen Fortschritt?',
+    angle: 'Sprich über Erfindergeist, neue Arbeitsplätze und Verlässlichkeit.',
+  },
+  {
+    category: 'Krisen & Haltung',
+    topic: 'Wenn eine eigene Entscheidung unpopulär ist: Wie erklärt man unangenehme Wahrheiten mit Respekt?',
+    angle: 'Erst Verständnis zeigen, dann ehrlich erklären warum – kein Schönreden.',
+  },
 ];
 
 export const TELEPROMPTER_SPEECHES = [
@@ -362,6 +412,14 @@ export const WORD_CHALLENGE_TOPICS = [
   'Mobilität der Zukunft für Stadt und Land',
   'Warum ehrliche Fehlerkultur in der Politik Stärke zeigt',
   'Integration durch Arbeit, Sprache und klare Regeln',
+  'Europa in unsicheren Zeiten: Warum Einigkeit jetzt zählt',
+  'Kinderarmut bekämpfen – jede Biografie zählt',
+  'Künstliche Intelligenz in Schule, Betrieb und Alltag',
+  'Bürgerbeteiligung vor Ort: Vom Zuhören zum Handeln',
+  'Saubere Energie und bezahlbare Industrieproduktion',
+  'Verlässliche Infrastruktur: Brücken, Schienen und Netze',
+  'Einsamkeit im Alter und Druck auf pflegende Angehörige',
+  'Wie holen wir Politikverdrossene zurück an den Tisch?',
 ];
 
 export const WORD_CHALLENGE_POOLS = {
@@ -397,6 +455,8 @@ export const STYLE_DRILLS = [
       'Formuliere einen Dreiklang darüber, was gute politische Führung ausmacht.',
       'Formuliere einen Dreiklang für die Zukunft deiner Heimatstadt.',
       'Nutze „Nicht X, nicht Y, sondern Z“ zum Thema soziale Gerechtigkeit.',
+      'Formuliere einen Dreiklang über Respekt gegenüber Pflegekräften und Handwerkern.',
+      'Baue einen Dreiklang zum Thema bezahlbares Wohnen in wachsenden Städten.',
     ],
   },
   {
@@ -410,6 +470,8 @@ export const STYLE_DRILLS = [
       'Starte 3 Sätze mit „Es geht um…“ zum Thema bezahlbares Leben.',
       'Starte 3 Sätze mit „Wir wissen…“ zum Thema Klimawandel & Innovation.',
       'Starte 3 Sätze mit „Stell dir vor…“ über deine Vision in 10 Jahren.',
+      'Starte 3 Sätze mit „Veränderung beginnt…“ über Demokratie im Alltag.',
+      'Starte 3 Sätze mit „Wir stehen für…“ für eine klare politische Haltung.',
     ],
   },
   {
@@ -423,6 +485,22 @@ export const STYLE_DRILLS = [
       'Drehe das Thema „Steuern & Investitionen“ mit einem Kontrast-Pivot.',
       'Drehe einen Vorwurf „Sie sind zu jung/neu“ in eine Stärke mit „Es geht nicht um… sondern um…“.',
       'Verbinde Stadt und Land mit einem Kontrast-Satz.',
+      'Löse das Thema „Sicherheit vs. Freiheit“ in einem Kontrast-Pivot auf.',
+      'Verbinde Wirtschaftsstärke und Klimaschutz mit „Nicht A gegen B, sondern…“.',
+    ],
+  },
+  {
+    id: 'drill_appell',
+    title: 'Der 3-Satz-Appell (Self · Us · Now)',
+    formula: '1× Eigene Beobachtung → 1× Gemeinsame Realität → 1× Klare Entscheidung heute',
+    exampleBefore: 'Ich finde das Problem wichtig und wir sollten alle zusammen etwas ändern.',
+    exampleAfter:
+      'Letzte Woche stand ich am leeren Bahnsteig im Regen. Tausende Pendler kennen genau dieses Gefühl des Wartens. Deshalb investieren wir ab heute in verlässliche Schienen statt in Ausreden.',
+    prompts: [
+      'Verbinde eine persönliche Alltagsszene mit einem klaren „Wir“-Appell zur Bildung.',
+      'Starte mit einem Gespräch am Küchentisch und führe zur gemeinsamen Verantwortung.',
+      'Erkläre in 3 Sätzen, warum Ehrenamt das Rückgrat deiner Gemeinde ist.',
+      'Verwandle Frust über Bürokratie in einen konkreten 3-Satz-Aufbruch.',
     ],
   },
 ];
@@ -475,6 +553,283 @@ export const GEGENWIND_QUESTIONS = [
     question:
       '„Ihre Klimapläne kosten doch nur Arbeitsplätze in unserer Region!“',
     tip: 'Falsches Entweder-Oder auflösen: „Wenn wir nichts tun, verlieren wir die Märkte von morgen. Unser Job ist beides: Klimaschutz UND sichere Industriearbeitsplätze.“',
+  },
+  {
+    tag: 'Bürokratie',
+    question:
+      '„Jede neue Vorschrift lähmt unseren Handwerksbetrieb – warum erfinden Sie immer neue Regeln?“',
+    tip: 'Zustimmung zeigen, dann differenzieren: „Wer arbeitet, braucht Rückenwind statt Formulare. Lassen Sie uns klar unterscheiden zwischen Schutz und Papierkrieg.“',
+  },
+  {
+    tag: 'Generationen',
+    question:
+      '„Ihr macht Politik entweder nur für Rentner oder nur für Junge – wie soll das je gerecht werden?“',
+    tip: 'Brücken-Pivot: „Eine Enkelin profitiert von stabilen Renten ihrer Großeltern, und Großeltern profitieren von starken Schulen. Generationen gehören an denselben Tisch.“',
+  },
+  {
+    tag: 'Wohnen',
+    question:
+      '„Seit Jahren wird über bezahlbare Mieten geredet – passiert ist in unserem Viertel gar nichts!“',
+    tip: 'Nicht beschönigen! Konkrete Engpässe benennen (Genehmigung, Boden, Baukosten) und einen klaren 3-Schritte-Plan vorstellen.',
+  },
+  {
+    tag: 'Europa',
+    question:
+      '„Warum sollen wir immer weiter Geld nach Brüssel schicken, wenn vor unserer eigenen Haustür Brücken bröckeln?“',
+    tip: 'Beide Interessen verbinden: „Starke Kommunen vor Ort und ein handlungsfähiges Europa sind kein Gegensatz – ein starker Binnenmarkt finanziert erst unseren Wohlstand vor Ort.“',
+  },
+  {
+    tag: 'Social Media',
+    question:
+      '„In den sozialen Medien heißt es, Sie drücken sich vor klaren Ja-oder-Nein-Antworten!“',
+    tip: 'Ruhige Autorität: „Komplexe Probleme passen selten in fünf Sekunden Empörung. Meine Haltung ist eindeutig – und ich erkläre Ihnen gerne die zwei Gründe dahinter.“',
+  },
+  {
+    tag: 'Infrastruktur',
+    question:
+      '„Die Züge kommen zu spät, das Netz reißt ab – warum sollte der Staat überhaupt irgendetwas besser hinbekommen?“',
+    tip: 'Ehrlich anerkennen, dann Hoffnung über Handlungsfähigkeit aufbauen: „Genau deshalb brauchen wir Prioritäten, Tempo bei Planungen und klare Verantwortung.“',
+  },
+];
+
+export const LESSONS = [
+  {
+    id: 'lesson_01_pausen',
+    num: '01',
+    title: 'Die Obama-Sekunde: Wirkungspausen setzen',
+    dimension: 'pausen',
+    mode: 'spontan',
+    durationSec: 45,
+    summary: 'Lerne, nach Kernaussagen 1,2–2,0 Sekunden echte Stille auszuhalten statt Lücken mit „ähm“ zu füllen.',
+    theory: 'Unsichere Redner fürchten Stille und beschleunigen nach wichtigen Sätzen. Staatsmänner setzen einen Punkt — und lassen den Raum 1,5 Sekunden arbeiten.',
+    exampleBefore: 'Wir müssen das jetzt anpacken und ähem deshalb brauchen wir neue Ideen in der Stadt.',
+    exampleAfter: 'So wie bisher kann es nicht bleiben. [1,5s Stille] Genau deshalb fangen wir heute an.',
+    taskPrompt: 'Erkläre in 45 Sekunden, welche Sache in deiner Stadt oder deinem Alltag sich als Erstes verbessern muss. Setze nach deinen 3 wichtigsten Sätzen bewusst 1,5 Sekunden Pause.',
+    checklist: [
+      'Mindestens 3 hörbare Wirkungspausen (>= 0,8s)',
+      'Pausenanteil ideal zwischen 12 % und 32 %',
+      'Gesamtwertung der Lektion mindestens 70/100',
+    ],
+    passRule: { minScore: 70, minPauses: 3 },
+  },
+  {
+    id: 'lesson_02_tempo',
+    num: '02',
+    title: 'Staatsmann-Tempo: Souveräne 125 WPM',
+    dimension: 'tempo',
+    mode: 'teleprompter',
+    durationSec: 55,
+    summary: 'Finde den ruhigen Obama-Korridor zwischen 115 und 135 Wörtern pro Minute ohne Hast.',
+    theory: 'Wer über 150 WPM spricht, klingt getrieben und signalisiert Rechtfertigungsdruck. Bei ~125 WPM wirkt jeder Satz abgewogen und glaubwürdig.',
+    exampleBefore: 'Zu schnelles Durchrattern von Statistiken und Forderungen ohne Atemraum.',
+    exampleAfter: 'Gleichmäßiger Fluss mit bewusster Betonung auf Schlüsselwörtern und ruhigen Atempausen.',
+    taskPrompt: 'Lies den folgenden Text laut und ruhig im Korridor 115–135 WPM vor. Hetze bei keinem Satz.',
+    referenceText: `[RUHIGER]
+Vertrauen entsteht nicht auf Plakaten. [PAUSE 1.4s]
+Vertrauen entsteht dort, wo Worte und Taten im Alltag zusammenpassen. [PAUSE 1.2s]
+Wenn ein Bus pünktlich kommt. Wenn ein Antrag nicht Monate dauert. Wenn ein Versprechen auch nach der Wahl noch gilt. [PAUSE 1.5s]
+[CRESCENDO] Genau dieses Maß an [BETONUNG] Verlässlichkeit wollen wir gemeinsam zurückholen.`,
+    checklist: [
+      'Sprechtempo im ruhigen Korridor (105–145 WPM)',
+      'Klare Texttreue und saubere Pausen',
+      'Gesamtwertung der Lektion mindestens 72/100',
+    ],
+    passRule: { minScore: 72, wpmMin: 105, wpmMax: 145 },
+  },
+  {
+    id: 'lesson_03_satzende',
+    num: '03',
+    title: 'Tonfall & Satzende nach unten',
+    dimension: 'dynamik',
+    mode: 'teleprompter',
+    durationSec: 50,
+    summary: 'Vermeide fragendes „Uptalk“ am Satzende und baue ein hörbares Crescendo vom ruhigen Einstieg bis zum Schluss auf.',
+    theory: 'Wenn die Stimmlage am Satzende nach oben geht, klingt eine Aussage wie eine Bitte um Erlaubnis. Senke den Ton auf dem letzten Wort ruhig ab.',
+    exampleBefore: '„Wir können das schaffen? Und wir brauchen mehr Mut?“ (fragende Endmelodie)',
+    exampleAfter: '„Wir können das schaffen. Und wir fangen heute damit an.“ (tiefer, ruhiger Punkt)',
+    taskPrompt: 'Sprich diesen Abschnitt mit ruhigem, tiefem Einstieg, klar absinkenden Satzenden und spürbarer Energie-Steigerung beim [CRESCENDO].',
+    referenceText: `[RUHIGER]
+Niemand hat uns versprochen, dass Veränderung bequem wird. [PAUSE 1.4s]
+Aber Bequemlichkeit hat noch nie ein Problem gelöst. [PAUSE 1.2s]
+Wir definieren uns nicht durch die Hürden vor uns.
+[CRESCENDO] Wir definieren uns durch den [BETONUNG] Mut, sie Schritt für Schritt aus dem Weg zu räumen. [PAUSE 1.4s]
+Packen wir es an.`,
+    checklist: [
+      'Ruhig beginnen, zum Finale spürbar steigern',
+      'Satzenden sicher nach unten abschließen',
+      'Gesamtwertung der Lektion mindestens 72/100',
+    ],
+    passRule: { minScore: 72 },
+  },
+  {
+    id: 'lesson_04_dreiklang',
+    num: '04',
+    title: 'Die Architektur des Dreiklangs (Trikolon)',
+    dimension: 'stilmittel',
+    mode: 'spontan',
+    durationSec: 50,
+    summary: 'Bündle Argumente in rhythmischen Dreiergruppen („A, B und stärkstes C“) für sofortige Einprägsamkeit.',
+    theory: 'Das Gehirn verarbeitet Dreiergruppen als vollständig und überzeugend. Obama baut nahezu jede Schlüsselpassage auf genau drei Elementen auf.',
+    exampleBefore: 'Wir müssen Bildung verbessern und das Klima schützen.',
+    exampleAfter: 'Wir kämpfen für Schulen, die Talente wecken, für Betriebe, die Zukunft bauen, und für ein Miteinander, das niemanden zurücklässt.',
+    taskPrompt: 'Sprich 50 Sekunden zum Thema „Was unsere Gesellschaft jetzt zusammenhält“ und baue mindestens einen bewussten Dreiklang ein.',
+    checklist: [
+      'Mindestens 1 klares Stilmittel (Dreiklang/Anapher/Kontrast)',
+      'Sichtbarer Aufbau vom ersten bis zum dritten Punkt',
+      'Gesamtwertung der Lektion mindestens 70/100',
+    ],
+    passRule: { minScore: 70, minDevices: 1 },
+  },
+  {
+    id: 'lesson_05_kontrast',
+    num: '05',
+    title: 'Kontrast-Brücken statt Entweder-Oder',
+    dimension: 'stilmittel',
+    mode: 'spontan',
+    durationSec: 55,
+    summary: 'Löse politische Scheingegensätze mit Antithesen auf („Es geht nicht um X – es geht um Y“).',
+    theory: 'Polarisierende Debatten leben von falschen Alternativen. Der Kontrast-Pivot hebt die Diskussion auf eine gemeinsame Ebene.',
+    exampleBefore: 'Man muss sich zwischen Wirtschaft und Umweltschutz entscheiden.',
+    exampleAfter: 'Es geht nicht um Wirtschaft gegen Klimaschutz. Es geht darum, wie wir Arbeitsplätze von morgen heute sichern.',
+    taskPrompt: 'Löse in 55 Sekunden einen scheinbaren Gegensatz (z. B. Stadt vs. Land oder Alt vs. Jung) mit einer klaren Kontrast-Brücke auf.',
+    checklist: [
+      'Mindestens 1 Kontrast-Brücke / Antithese erkannt',
+      'Beide Perspektiven fair anerkannt und verbunden',
+      'Gesamtwertung der Lektion mindestens 72/100',
+    ],
+    passRule: { minScore: 72, minDevices: 1 },
+  },
+  {
+    id: 'lesson_06_wir',
+    num: '06',
+    title: 'Vom „Ich“ zum „Wir“ & Werte-Anker',
+    dimension: 'wirCharisma',
+    mode: 'spontan',
+    durationSec: 55,
+    summary: 'Mache das Publikum zum Hauptakteur deiner Rede und verankere Argumente in geteilten Werten.',
+    theory: 'Zuhörer folgen nicht jemandem, der nur über sich spricht. Verbinde persönliche Erfahrung mit „wir“, „uns“ und Werten wie Vertrauen, Fairness oder Verantwortung.',
+    exampleBefore: 'Ich habe ein Konzept geschrieben und ich werde das jetzt durchsetzen.',
+    exampleAfter: 'Wir wissen alle, was auf dem Spiel steht. Wenn wir Verantwortung teilen, entsteht neues Vertrauen in unsere Zukunft.',
+    taskPrompt: 'Halte eine 55-Sekunden-Einladung zum Mitmachen an Menschen in deiner Gemeinde. Nutze starkes „Wir“-Framing und mindestens zwei Werte-Begriffe.',
+    checklist: [
+      'Mindestens 2× inklusives „Wir / Uns / Unser“',
+      'Mindestens 1 klarer Werte-Begriff (z. B. Vertrauen, Verantwortung)',
+      'Gesamtwertung der Lektion mindestens 72/100',
+    ],
+    passRule: { minScore: 72, minWeCount: 2 },
+  },
+  {
+    id: 'lesson_07_klarheit',
+    num: '07',
+    title: 'Null Füllwörter unter Zeitdruck',
+    dimension: 'klarheit',
+    mode: 'wort-challenge',
+    durationSec: 60,
+    summary: 'Verwebe vorgegebene Pflichtbegriffe spontan in klare Sätze — ohne „ähm“, „halt“ oder „irgendwie“.',
+    theory: 'Füllwörter entstehen genau in der Sekunde, in der wir nach dem nächsten Wort suchen. Ersetze jedes „ähm“ durch eine kurze Denkpause — die wirkt sofort souverän.',
+    exampleBefore: 'Da müssen wir halt irgendwie sozusagen eine Lösung finden, ähm damit Vertrauen entsteht.',
+    exampleAfter: 'Dafür brauchen wir eine klare Lösung. [Pause] Nur so wächst wieder Vertrauen in unseren Alltag.',
+    taskPrompt: 'Thema: „Wie wird Politik wieder greifbar?“ — Baue alle 3 Pflichtwörter organisch ein und bleibe bei maximal 1 Füllwort.',
+    mandatoryWords: ['Vertrauen', 'Alltag', 'Lösung'],
+    checklist: [
+      'Maximal 1 Füllwort im gesamten Transkript',
+      'Alle 3 Pflichtwörter organisch integriert',
+      'Gesamtwertung der Lektion mindestens 74/100',
+    ],
+    passRule: { minScore: 74, maxFillers: 1 },
+  },
+  {
+    id: 'lesson_08_crescendo',
+    num: '08',
+    title: 'Die 60-Sekunden-Mini-Rede (Meisterstück)',
+    dimension: 'dynamik',
+    mode: 'spontan',
+    durationSec: 60,
+    summary: 'Verbinde alle Techniken: ruhiger Einstieg, Wirkungspausen, Dreiklang, Wir-Fokus und ein kraftvoller Schluss.',
+    theory: 'Große Wirkung entsteht durch Kontrast: 20 Sekunden ruhig erzählen, 20 Sekunden klar argumentieren, 20 Sekunden mit Überzeugung abschließen.',
+    exampleBefore: 'Gleichförmiger Vortrag ohne Spannungsbogen und abruptes Ende.',
+    exampleAfter: 'Konkreter Auftakt → Pause → Kontrast & Dreiklang → ruhige Pointe am Schluss.',
+    taskPrompt: 'Halte eine freie 60-Sekunden-Rede über eine Veränderung, für die du persönlich einstehst. Nutze Einstiegsszene, Kontrast, Dreiklang und eine bewusste Schlusspause.',
+    checklist: [
+      'Ausgewogene Kadenz über alle Dimensionen',
+      'Klares Stilmittel oder starkes „Wir“-Finale',
+      'Gesamtwertung der Lektion mindestens 75/100',
+    ],
+    passRule: { minScore: 75 },
+  },
+];
+
+export const RATED_TESTS = [
+  {
+    id: 'test_kadenz',
+    num: 'Prüfung 01',
+    title: 'Kadenz-, Tempo- & Pausen-Test',
+    mode: 'teleprompter',
+    durationSec: 65,
+    passScore: 80,
+    dimensionsLabel: 'Tempo · Pausen · Dynamik · Klarheit',
+    description: 'Prüft deine stimmliche Kontrolle beim Ablesen: ruhiges Tempo (115–135 WPM), echte Pausen, sinkende Satzenden und Crescendo.',
+    prompt: 'Lies den Prüfungstext exakt mit allen Regiezeichen per Mikrofon vor. Achte besonders auf die 1,5s-Pausen.',
+    referenceText: `[RUHIGER]
+Man sagt uns in diesen Monaten oft, unsere Gesellschaft sei zu zerstritten für echte Lösungen. [PAUSE 1.5s]
+Dass die Gräben zwischen Jung und Alt, zwischen Stadt und Land, zwischen Skepsis und Aufbruch zu tief geworden seien. [PAUSE 1.2s]
+
+Aber sehen Sie genau hin: [PAUSE 1.0s]
+Die Menschen erwarten keine perfekten Wunder über Nacht.
+Sie erwarten Ehrlichkeit. Sie erwarten Respekt. Und sie erwarten eine Politik, die wieder [BETONUNG] zuhört. [PAUSE 1.5s]
+
+[CRESCENDO] Es geht nicht darum, wer am lautesten ruft.
+Es geht darum, wer Verantwortung übernimmt, wenn es schwierig wird. [PAUSE 1.2s]
+Fangen wir genau dort an – ruhig, klar und gemeinsam.`,
+    mandatoryWords: [],
+  },
+  {
+    id: 'test_architektur',
+    num: 'Prüfung 02',
+    title: 'Stilmittel- & Werte-Prüfung (60s)',
+    mode: 'spontan',
+    durationSec: 60,
+    passScore: 78,
+    dimensionsLabel: 'Alle 6 Dimensionen · Schwerpunkt Stilmittel & Wir',
+    description: 'Bewertet deine freie Rede auf rhetorische Architektur: Dreiklang, Kontrast-Pivot, „Wir“-Framing und Werte-Tiefe.',
+    prompt: 'Freie 60-Sekunden-Rede: „Warum lohnt sich Engagement für unsere Demokratie gerade heute?“ — Nutze mindestens einen Dreiklang, eine Kontrast-Brücke und starkes „Wir“-Framing.',
+    mandatoryWords: [],
+  },
+  {
+    id: 'test_gegenwind',
+    num: 'Prüfung 03',
+    title: 'Gegenwind- & Pflichtwort-Prüfung (75s)',
+    mode: 'wort-challenge',
+    durationSec: 75,
+    passScore: 78,
+    dimensionsLabel: 'Alle 6 Dimensionen · Schwerpunkt Klarheit & Souveränität',
+    description: 'Simuliert kritischen Gegenwind unter Zeitdruck mit drei Pflichtbegriffen und strenger Füllwort-Prüfung.',
+    prompt: 'Antworte ruhig und souverän auf den Vorwurf: „Politiker reden doch nur schön – für unseren Alltag ändert sich nichts!“ Baue alle 3 Pflichtwörter organisch ein.',
+    mandatoryWords: ['Verantwortung', 'Brücke', 'Vertrauen'],
+  },
+  {
+    id: 'test_grundsatz',
+    num: 'Prüfung 04',
+    title: 'Große 90-Sekunden-Grundsatzrede',
+    mode: 'spontan',
+    durationSec: 90,
+    passScore: 82,
+    dimensionsLabel: 'Alle 6 Dimensionen (Vollwertung)',
+    description: 'Vollständige freie Grundsatzrede mit Spannungsbogen (Story of Self → Us → Now), Stimm-Dynamik und Pointen-Schärfe.',
+    prompt: 'Halte eine 90-Sekunden-Grundsatzrede zu deiner politischen Kernvision: Was steht für dich auf dem Spiel, was verbindet uns alle, und was tun wir heute?',
+    mandatoryWords: [],
+  },
+  {
+    id: 'test_staatsmann',
+    num: 'Prüfung 05',
+    title: 'Staatsmann-Zertifikat (Master-Prüfung)',
+    mode: 'wort-challenge',
+    durationSec: 120,
+    passScore: 85,
+    dimensionsLabel: 'Alle 6 Dimensionen (höchster Maßstab)',
+    description: 'Die anspruchsvollste Abschlussprüfung über 2 Minuten mit 4 Pflichtwörtern: ruhige Kadenz, Dynamik-Crescendo, Stilmittel und volle Klarheit.',
+    prompt: 'Halte eine zweiminütige Schlussrede für eine Townhall-Versammlung zum Thema „Aufbruch in unsicheren Zeiten“. Integriere alle 4 Pflichtwörter nahtlos.',
+    mandatoryWords: ['Fundament', 'Zusammenhalt', 'Gegenwind', 'Zukunft'],
   },
 ];
 

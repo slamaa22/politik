@@ -32,6 +32,11 @@
           <span class="nav-icon" data-icon="trendingUp" data-size="16"></span>
           <span>Profil &amp; Plan</span>
         </button>
+        <button class="nav-item" data-view="lektionen">
+          <span class="nav-icon" data-icon="layers" data-size="16"></span>
+          <span>Lektionen &amp; Tests</span>
+          <span id="navLessonsBadge" class="badge badge-neutral num">0/8</span>
+        </button>
         <button class="nav-item" data-view="spontanrede">
           <span class="nav-icon" data-icon="mic" data-size="16"></span>
           <span>Spontanrede</span>
@@ -240,6 +245,185 @@
             <button id="clearHistoryBtn" class="btn btn-outline btn-sm">Verlauf zurücksetzen</button>
           </div>
           <div id="dashHistoryList" class="history-list"></div>
+        </div>
+      </section>
+
+      <!-- ================= VIEW: LEKTIONEN & WERTUNGS-TESTS ================= -->
+      <section id="view-lektionen" class="view">
+        <div class="subtabs" id="lektionenSubtabs">
+          <button type="button" class="subtab active" data-sublektion="lektionen">Lektionen &amp; Aufgaben</button>
+          <button type="button" class="subtab" data-sublektion="tests">Wertungs-Tests</button>
+        </div>
+
+        <!-- Subtab 1: Lektionen & Aufgaben -->
+        <div id="sublektion-lektionen" class="sublektion-panel active">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <span class="eyebrow">Strukturiertes Curriculum</span>
+                <h2>8 Lektionen zur Obama-Kadenz</h2>
+              </div>
+              <span class="badge badge-neutral num" id="lessonProgressBadge">0 / 8 bestanden</span>
+            </div>
+            <div class="curriculum-progress-track" aria-hidden="true">
+              <div class="curriculum-progress-fill" id="lessonProgressFill" style="width: 0%"></div>
+            </div>
+            <p class="muted-text">
+              Lerne Technik für Technik im geschützten Übungsmodus. Lektionen zählen für deinen Lernfortschritt und beeinflussen deinen Startwert oder Rhetorik-Index nicht.
+            </p>
+            <div id="lessonSelectorGrid" class="lesson-grid"></div>
+          </div>
+
+          <div class="card" id="lessonStudioCard">
+            <div class="card-header">
+              <div>
+                <span class="eyebrow" id="lessonEyebrow">Lektion 01</span>
+                <h2 id="lessonTitle">Die Obama-Sekunde</h2>
+              </div>
+              <span class="badge badge-neutral" id="lessonStatusBadge">Offen</span>
+            </div>
+            <p class="muted-text" id="lessonSummary"></p>
+
+            <div class="grid-2">
+              <div class="subpanel">
+                <span class="eyebrow">Technik &amp; Prinzip</span>
+                <p class="muted-text" id="lessonTheory"></p>
+              </div>
+              <div class="subpanel">
+                <span class="eyebrow">Vorher / Nachher</span>
+                <div class="example-before" id="lessonExBefore"></div>
+                <div class="example-after" id="lessonExAfter"></div>
+              </div>
+            </div>
+
+            <div class="prompt-box">
+              <span class="eyebrow">Praktische Aufgabe</span>
+              <p class="prompt-main" id="lessonTaskPrompt"></p>
+              <div id="lessonReadWrap" class="read-card hidden"></div>
+              <div id="lessonWordsWrap" class="mandatory-chips hidden"></div>
+              <div id="lessonChecklist" class="checklist-box"></div>
+            </div>
+
+            <div class="studio-controls">
+              <div class="timer-display">
+                <span class="timer-label">Zeit</span>
+                <strong id="lessonTimer" class="num">00:00</strong>
+                <span class="timer-target num" id="lessonTargetTime">/ 00:45</span>
+              </div>
+              <div class="rec-buttons">
+                <button id="lessonStartBtn" type="button" class="btn btn-primary">
+                  <span data-icon="mic" data-size="15"></span>
+                  <span>Aufnahme starten</span>
+                </button>
+                <button id="lessonStopBtn" type="button" class="btn btn-danger hidden">
+                  <span data-icon="square" data-size="15"></span>
+                  <span>Stoppen &amp; Prüfen</span>
+                </button>
+              </div>
+              <div class="live-pausen-ampel" id="lessonAmpel">
+                <span class="ampel-dot"></span>
+                <span class="ampel-text">Bereit</span>
+              </div>
+            </div>
+
+            <canvas id="lessonCanvas" class="waveform-canvas" width="760" height="72"></canvas>
+            <div id="lessonSpeechNotice" class="speech-notice hidden"></div>
+            <div id="lessonAudioPlayback" class="audio-playback hidden"></div>
+
+            <textarea
+              id="lessonTranscript"
+              class="transcript-input"
+              rows="4"
+              placeholder="Live-Transkript erscheint hier (oder Antwort manuell eingeben)..."
+            ></textarea>
+
+            <div class="card-actions-end">
+              <button id="lessonEvaluateBtn" type="button" class="btn btn-secondary">
+                Lektion prüfen &amp; abschließen
+              </button>
+            </div>
+          </div>
+
+          <div id="lessonResultBox" class="card hidden"></div>
+        </div>
+
+        <!-- Subtab 2: Wertungs-Tests -->
+        <div id="sublektion-tests" class="sublektion-panel">
+          <div class="callout">
+            <span>
+              <strong>Offizielle Wertungs-Tests:</strong> Normale Trainings verändern deinen Startwert nicht. Jeder abgeschlossene Wertungs-Test hier aktualisiert direkt deinen <strong>Aktuellen Rhetorik-Index</strong> und dein <strong>Kompetenz-Radar</strong> in den geprüften Dimensionen — dein Startwert (Baseline) bleibt immer als fester Bezugspunkt erhalten.
+            </span>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <span class="eyebrow">Zertifizierte Leistungsproben</span>
+                <h2>Wertungs-Tests auswählen</h2>
+              </div>
+              <span class="badge badge-neutral num" id="ratedTestProgressBadge">0 / 5 abgelegt</span>
+            </div>
+            <div id="ratedTestSelectorGrid" class="lesson-grid"></div>
+          </div>
+
+          <div class="card" id="ratedTestStudioCard">
+            <div class="card-header">
+              <div>
+                <span class="eyebrow" id="ratedTestEyebrow">Prüfung 01</span>
+                <h2 id="ratedTestTitle">Kadenz-, Tempo- &amp; Pausen-Test</h2>
+              </div>
+              <span class="badge badge-neutral num" id="ratedTestTargetBadge">Ziel: &ge; 80/100</span>
+            </div>
+            <p class="muted-text" id="ratedTestDesc"></p>
+
+            <div class="prompt-box">
+              <span class="eyebrow" id="ratedTestDimsLabel">Geprüfte Dimensionen</span>
+              <p class="prompt-main" id="ratedTestPrompt"></p>
+              <div id="ratedTestReadWrap" class="read-card hidden"></div>
+              <div id="ratedTestWordsWrap" class="mandatory-chips hidden"></div>
+            </div>
+
+            <div class="studio-controls">
+              <div class="timer-display">
+                <span class="timer-label">Prüfungszeit</span>
+                <strong id="ratedTestTimer" class="num">00:00</strong>
+                <span class="timer-target num" id="ratedTestTargetTime">/ 01:05</span>
+              </div>
+              <div class="rec-buttons">
+                <button id="ratedTestStartBtn" type="button" class="btn btn-primary">
+                  <span data-icon="mic" data-size="15"></span>
+                  <span>Prüfung starten</span>
+                </button>
+                <button id="ratedTestStopBtn" type="button" class="btn btn-danger hidden">
+                  <span data-icon="square" data-size="15"></span>
+                  <span>Abgeben &amp; Werten</span>
+                </button>
+              </div>
+              <div class="live-pausen-ampel" id="ratedTestAmpel">
+                <span class="ampel-dot"></span>
+                <span class="ampel-text">Bereit</span>
+              </div>
+            </div>
+
+            <canvas id="ratedTestCanvas" class="waveform-canvas" width="760" height="72"></canvas>
+            <div id="ratedTestSpeechNotice" class="speech-notice hidden"></div>
+            <div id="ratedTestAudioPlayback" class="audio-playback hidden"></div>
+
+            <textarea
+              id="ratedTestTranscript"
+              class="transcript-input"
+              rows="4"
+              placeholder="Live-Transkript erscheint hier (oder Antwort manuell einfügen)..."
+            ></textarea>
+
+            <div class="card-actions-end">
+              <button id="ratedTestEvaluateBtn" type="button" class="btn btn-primary">
+                Prüfung auswerten &amp; Index aktualisieren
+              </button>
+            </div>
+          </div>
+
+          <div id="ratedTestResultBox" class="card hidden"></div>
         </div>
       </section>
 

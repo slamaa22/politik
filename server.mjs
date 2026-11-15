@@ -40,6 +40,7 @@ const DEFAULT_STATE = {
     us: '',
     now: '',
   },
+  completedLessons: {},
   updatedAt: null,
 };
 
@@ -172,6 +173,10 @@ async function readState(dataFile) {
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
       customSpeeches: Array.isArray(parsed.customSpeeches) ? parsed.customSpeeches : [],
       storyDraft: { ...DEFAULT_STATE.storyDraft, ...(parsed.storyDraft || {}) },
+      completedLessons:
+        parsed.completedLessons && typeof parsed.completedLessons === 'object' && !Array.isArray(parsed.completedLessons)
+          ? parsed.completedLessons
+          : {},
     };
   } catch {
     return structuredClone(DEFAULT_STATE);
@@ -411,6 +416,31 @@ export function createAppServer({
           self: String(body.self ?? state.storyDraft.self ?? ''),
           us: String(body.us ?? state.storyDraft.us ?? ''),
           now: String(body.now ?? state.storyDraft.now ?? ''),
+        };
+        const saved = await writeState(dataFile, state);
+        return sendJson(res, 200, saved);
+      }
+
+      if (pathname === '/api/lessons' && req.method === 'POST') {
+        const body = await parseJsonBody(req);
+        const lessonId = String(body.lessonId || '').trim();
+        if (!lessonId) {
+          return sendJson(res, 400, { error: 'lessonId ist erforderlich.' });
+        }
+        const state = await readState(dataFile);
+        const prev = state.completedLessons?.[lessonId];
+        const score = Number(body.score || 0);
+        state.completedLessons = {
+          ...(state.completedLessons || {}),
+          [lessonId]: {
+            lessonId,
+            title: String(body.title || prev?.title || lessonId),
+            passed: Boolean(prev?.passed) || body.passed !== false,
+            bestScore: Math.max(Number(prev?.bestScore || 0), score),
+            lastScore: score,
+            completedAt: prev?.completedAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
         };
         const saved = await writeState(dataFile, state);
         return sendJson(res, 200, saved);
