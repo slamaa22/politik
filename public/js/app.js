@@ -166,6 +166,74 @@ function renderAudioPlayback(container, audioUrl) {
   container.innerHTML = `<audio controls src="${audioUrl}"></audio>`;
 }
 
+async function autoTranscribeIfNeeded(
+  recResult,
+  { transcriptEl = null, noticeEl = null, onText = null, statusBtn = null } = {}
+) {
+  const existingText = transcriptEl
+    ? transcriptEl.value.trim()
+    : String(recResult?.transcript || '').trim();
+
+  if (!recResult?.blob || recResult._transcribed || existingText) {
+    return existingText;
+  }
+  recResult._transcribed = true;
+
+  if (noticeEl) {
+    noticeEl.textContent = 'Transkribiere Aufnahme über Server-Whisper...';
+    noticeEl.classList.remove('hidden');
+  }
+  const prevBtnHtml = statusBtn ? statusBtn.innerHTML : null;
+  if (statusBtn) {
+    statusBtn.disabled = true;
+    statusBtn.innerHTML = '<span>Transkribiere...</span>';
+  }
+
+  try {
+    const res = await fetch('/api/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': recResult.blob.type || 'audio/webm' },
+      body: recResult.blob,
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok && data.ok) {
+      const text = String(data.text || '').trim();
+      recResult.transcript = text;
+      if (text) {
+        if (transcriptEl) transcriptEl.value = text;
+        if (onText) onText(text);
+        if (noticeEl) noticeEl.classList.add('hidden');
+      } else if (noticeEl) {
+        noticeEl.textContent =
+          'Keine Sprache erkannt – Audioanalyse wurde erstellt, Text bei Bedarf manuell ergänzen.';
+        noticeEl.classList.remove('hidden');
+      }
+      return text;
+    }
+
+    if (noticeEl) {
+      noticeEl.textContent = data.unavailable
+        ? 'Server-Transkription hier nicht aktiv – Audioanalyse läuft, Text optional ergänzen.'
+        : data.error || 'Transkription fehlgeschlagen – Audioanalyse läuft, Text optional ergänzen.';
+      noticeEl.classList.remove('hidden');
+    }
+    return '';
+  } catch {
+    if (noticeEl) {
+      noticeEl.textContent =
+        'Server-Transkription nicht erreichbar – Audioanalyse läuft, Text optional ergänzen.';
+      noticeEl.classList.remove('hidden');
+    }
+    return '';
+  } finally {
+    if (statusBtn) {
+      statusBtn.disabled = false;
+      if (prevBtnHtml !== null) statusBtn.innerHTML = prevBtnHtml;
+    }
+  }
+}
+
 function renderAnalysisCard(container, title, analysis) {
   if (!container) return;
   container.classList.remove('hidden');
@@ -329,6 +397,9 @@ function renderBaselineStep() {
 
   const existing = baselineState.stepResults[baselineState.stepIdx];
   document.getElementById('baseTranscript').value = existing?.transcript || '';
+  document.getElementById('baseSpeechNotice').classList.add('hidden');
+  renderAudioPlayback(document.getElementById('baseAudioPlayback'), null);
+  updateBaselineWordChips(existing?.transcript || '');
   document.getElementById('baseSavedSummary').textContent = existing
     ? `Ausgewertet: ${existing.analysis.obamaIndex}/100`
     : 'Noch nicht ausgewertet';
@@ -546,8 +617,17 @@ function initBaselineView() {
     startBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
     ampelEl.classList.remove('speaking', 'pause', 'rushing');
-    ampelEl.querySelector('.ampel-text').textContent = 'Aufnahme beendet';
+    ampelEl.querySelector('.ampel-text').textContent = 'Transkribiere Aufnahme...';
     renderAudioPlayback(document.getElementById('baseAudioPlayback'), result.audioUrl);
+
+    await autoTranscribeIfNeeded(result, {
+      transcriptEl,
+      noticeEl,
+      onText: updateBaselineWordChips,
+      statusBtn: document.getElementById('baseAnalyzeStepBtn'),
+    });
+
+    ampelEl.querySelector('.ampel-text').textContent = 'Aufnahme beendet';
     evaluateBaselineStep();
   });
 
@@ -765,6 +845,15 @@ function initSpontanView() {
     startBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
     skipPrepBtn.classList.add('hidden');
+
+    if (spontanLastRec) {
+      phaseEl.textContent = 'Transkribiere...';
+      await autoTranscribeIfNeeded(spontanLastRec, {
+        transcriptEl,
+        noticeEl,
+        statusBtn: document.getElementById('spontanAnalyzeBtn'),
+      });
+    }
     phaseEl.textContent = 'Ausgewertet';
 
     const text = transcriptEl.value.trim();
@@ -972,6 +1061,7 @@ function initTeleprompterView() {
     if (tpRecorder?.isRecording) {
       recResult = await tpRecorder.stop();
       renderAudioPlayback(document.getElementById('tpAudioPlayback'), recResult.audioUrl);
+      await autoTranscribeIfNeeded(recResult, { statusBtn: playBtn });
     }
 
     const analysis = analyzeSpeech({
@@ -1101,6 +1191,17 @@ function initWordChallengeView() {
     startBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
 
+    if (wcState.lastRec) {
+      ampelEl.querySelector('.ampel-text').textContent = 'Transkribiere Aufnahme...';
+      await autoTranscribeIfNeeded(wcState.lastRec, {
+        transcriptEl,
+        noticeEl,
+        onText: renderWcChips,
+        statusBtn: document.getElementById('wcAnalyzeBtn'),
+      });
+      ampelEl.querySelector('.ampel-text').textContent = 'Aufnahme beendet';
+    }
+
     const text = transcriptEl.value.trim();
     if (!text && (!wcState.lastRec || wcState.lastRec.durationSec < 3)) return;
 
@@ -1167,6 +1268,9 @@ function initDrillsView() {
     pStart.classList.remove('hidden');
     pStop.classList.add('hidden');
     pBox.classList.remove('in-pause');
+    document.getElementById('pauseStateText').textContent = 'Transkribiere...';
+
+    await autoTranscribeIfNeeded(result, { statusBtn: pStart });
     document.getElementById('pauseStateText').textContent = 'Beendet';
 
     const analysis = analyzeSpeech({
@@ -1292,7 +1396,15 @@ function initDrillsView() {
     document.getElementById('styleRecStartBtn').classList.remove('hidden');
     document.getElementById('styleRecStopBtn').classList.add('hidden');
 
-    const text = document.getElementById('styleTranscript').value.trim();
+    const transcriptEl = document.getElementById('styleTranscript');
+    if (styleLastRec) {
+      await autoTranscribeIfNeeded(styleLastRec, {
+        transcriptEl,
+        statusBtn: document.getElementById('styleCheckBtn'),
+      });
+    }
+
+    const text = transcriptEl.value.trim();
     if (!text) return;
     const analysis = analyzeSpeech({
       text,
@@ -1433,7 +1545,15 @@ function initDrillsView() {
     document.getElementById('gwStartBtn').classList.remove('hidden');
     document.getElementById('gwStopBtn').classList.add('hidden');
 
-    const text = document.getElementById('gwTranscript').value.trim();
+    const transcriptEl = document.getElementById('gwTranscript');
+    if (gwLastRec) {
+      await autoTranscribeIfNeeded(gwLastRec, {
+        transcriptEl,
+        statusBtn: document.getElementById('gwAnalyzeBtn'),
+      });
+    }
+
+    const text = transcriptEl.value.trim();
     if (!text && (!gwLastRec || gwLastRec.durationSec < 3)) return;
 
     const analysis = analyzeSpeech({

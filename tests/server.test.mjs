@@ -8,7 +8,10 @@ import { createAppServer } from '../server.mjs';
 test('HTTP server serves static app and persists baseline, sessions, speeches, and reset', async () => {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'orator-test-'));
   const dataFile = path.join(tmpDir, 'state.json');
-  const server = createAppServer({ dataFile });
+  const server = createAppServer({
+    dataFile,
+    workerScript: path.join(tmpDir, 'nonexistent_worker.py'),
+  });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
@@ -21,15 +24,33 @@ test('HTTP server serves static app and persists baseline, sessions, speeches, a
 
     const htmlRes = await fetch(`${baseUrl}/`);
     assert.equal(htmlRes.status, 200);
+    assert.equal(htmlRes.headers.get('cache-control'), 'no-cache, must-revalidate');
     const html = await htmlRes.text();
     assert.ok(html.includes('ORATOR — Rhetoriktrainer'));
 
-    // 2. Initial empty state
+    // 2. Transcribe validation & graceful unavailability
+    const emptyTranscribe = await fetch(`${baseUrl}/api/transcribe`, {
+      method: 'POST',
+      body: Buffer.alloc(0),
+    });
+    assert.equal(emptyTranscribe.status, 400);
+
+    const unavailTranscribe = await fetch(`${baseUrl}/api/transcribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'audio/webm' },
+      body: Buffer.from('fake-webm-bytes'),
+    });
+    assert.equal(unavailTranscribe.status, 503);
+    const unavailJson = await unavailTranscribe.json();
+    assert.equal(unavailJson.ok, false);
+    assert.equal(unavailJson.unavailable, true);
+
+    // 3. Initial empty state
     const initialState = await fetch(`${baseUrl}/api/state`).then((r) => r.json());
     assert.equal(initialState.baseline, null);
     assert.deepEqual(initialState.sessions, []);
 
-    // 3. Save baseline
+    // 4. Save baseline
     const baseRes = await fetch(`${baseUrl}/api/baseline`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -40,7 +61,7 @@ test('HTTP server serves static app and persists baseline, sessions, speeches, a
     }).then((r) => r.json());
     assert.equal(baseRes.baseline.obamaIndex, 64);
 
-    // 4. Save session & custom speech
+    // 5. Save session & custom speech
     const sessRes = await fetch(`${baseUrl}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -55,7 +76,7 @@ test('HTTP server serves static app and persists baseline, sessions, speeches, a
     }).then((r) => r.json());
     assert.equal(speechRes.speech.title, 'Testrede');
 
-    // 5. Reset all
+    // 6. Reset all
     const resetRes = await fetch(`${baseUrl}/api/reset`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

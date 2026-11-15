@@ -1,6 +1,8 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,6 +30,108 @@ const DEFAULT_STATE = {
   },
   updatedAt: null,
 };
+
+function createWhisperBridge(workerScript) {
+  let proc = null;
+  let readyPromise = null;
+  let lineBuffer = '';
+  const pending = [];
+
+  function rejectAll(err) {
+    while (pending.length) {
+      const item = pending.shift();
+      item.reject(err);
+    }
+  }
+
+  function ensureStarted() {
+    if (readyPromise) return readyPromise;
+    readyPromise = new Promise((resolve, reject) => {
+      const pyBin = process.env.PYTHON_BIN || 'python3';
+      proc = spawn(pyBin, [workerScript], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+      let settled = false;
+      proc.stdout.setEncoding('utf8');
+      proc.stdout.on('data', (chunk) => {
+        lineBuffer += chunk;
+        let idx;
+        while ((idx = lineBuffer.indexOf('\n')) !== -1) {
+          const line = lineBuffer.slice(0, idx).trim();
+          lineBuffer = lineBuffer.slice(idx + 1);
+          if (!line) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (!settled) {
+              settled = true;
+              if (msg.ready) resolve(true);
+              else reject(new Error(msg.error || 'Whisper worker failed to initialize'));
+            } else if (pending.length > 0) {
+              const item = pending.shift();
+              item.resolve(msg);
+            }
+          } catch (err) {
+            if (!settled) {
+              settled = true;
+              reject(err);
+            }
+          }
+        }
+      });
+
+      proc.on('error', (err) => {
+        readyPromise = null;
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+        rejectAll(err);
+      });
+
+      proc.on('exit', (code) => {
+        proc = null;
+        readyPromise = null;
+        const err = new Error(`Whisper worker exited with code ${code}`);
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+        rejectAll(err);
+      });
+    });
+    return readyPromise;
+  }
+
+  let queue = Promise.resolve();
+  async function transcribe(filePath, language = 'de') {
+    await ensureStarted();
+    const run = async () =>
+      new Promise((resolve, reject) => {
+        if (!proc || !proc.stdin.writable) {
+          return reject(new Error('Whisper worker stdin unavailable'));
+        }
+        pending.push({ resolve, reject });
+        proc.stdin.write(`${JSON.stringify({ path: filePath, language })}\n`);
+      });
+
+    const resultPromise = queue.then(run, run);
+    queue = resultPromise.catch(() => {});
+    return resultPromise;
+  }
+
+  function stop() {
+    if (proc) {
+      try {
+        proc.kill();
+      } catch {
+        // ignore
+      }
+      proc = null;
+      readyPromise = null;
+    }
+  }
+
+  return { transcribe, stop };
+}
 
 async function ensureStateFile(dataFile) {
   await fs.mkdir(path.dirname(dataFile), { recursive: true });
@@ -74,17 +178,22 @@ function sendJson(res, statusCode, body) {
   res.end(data);
 }
 
-async function parseJsonBody(req) {
+async function readRawBody(req, maxBytes = 20 * 1024 * 1024) {
   const chunks = [];
   let total = 0;
   for await (const chunk of req) {
     total += chunk.length;
-    if (total > 2 * 1024 * 1024) {
+    if (total > maxBytes) {
       throw new Error('Payload too large');
     }
     chunks.push(chunk);
   }
-  const text = Buffer.concat(chunks).toString('utf8').trim();
+  return Buffer.concat(chunks);
+}
+
+async function parseJsonBody(req) {
+  const buf = await readRawBody(req, 2 * 1024 * 1024);
+  const text = buf.toString('utf8').trim();
   if (!text) return {};
   return JSON.parse(text);
 }
@@ -92,10 +201,12 @@ async function parseJsonBody(req) {
 export function createAppServer({
   publicDir = path.join(__dirname, 'public'),
   dataFile = path.join(__dirname, 'data', 'trainer-state.json'),
+  workerScript = path.join(__dirname, 'transcribe_worker.py'),
 } = {}) {
   const resolvedPublic = path.resolve(publicDir);
+  const whisper = createWhisperBridge(workerScript);
 
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
       const pathname = decodeURIComponent(url.pathname);
@@ -107,6 +218,38 @@ export function createAppServer({
       if (pathname === '/api/state' && req.method === 'GET') {
         const state = await readState(dataFile);
         return sendJson(res, 200, state);
+      }
+
+      if (pathname === '/api/transcribe' && req.method === 'POST') {
+        const audioBuf = await readRawBody(req, 20 * 1024 * 1024);
+        if (!audioBuf.length) {
+          return sendJson(res, 400, { ok: false, error: 'Leere Audiodatei.' });
+        }
+        const contentType = String(req.headers['content-type'] || 'audio/webm').toLowerCase();
+        const ext = contentType.includes('ogg')
+          ? '.ogg'
+          : contentType.includes('mp4')
+            ? '.mp4'
+            : contentType.includes('wav')
+              ? '.wav'
+              : '.webm';
+        const tmpFile = path.join(os.tmpdir(), `orator_${Date.now()}_${Math.random().toString(36).slice(2, 7)}${ext}`);
+        try {
+          await fs.writeFile(tmpFile, audioBuf);
+          const result = await whisper.transcribe(tmpFile, 'de');
+          if (!result.ok) {
+            return sendJson(res, 500, { ok: false, error: result.error || 'Transkription fehlgeschlagen' });
+          }
+          return sendJson(res, 200, { ok: true, text: result.text || '', language: result.language || 'de' });
+        } catch (err) {
+          return sendJson(res, 503, {
+            ok: false,
+            unavailable: true,
+            error: err.message || 'Server-Transkription nicht verfügbar',
+          });
+        } finally {
+          await fs.rm(tmpFile, { force: true }).catch(() => {});
+        }
       }
 
       if (pathname === '/api/baseline' && req.method === 'POST') {
@@ -189,7 +332,7 @@ export function createAppServer({
         return sendJson(res, 404, { error: 'API endpoint not found' });
       }
 
-      // Static file serving
+      // Static file serving with no-cache so deployments reflect immediately
       const relPath = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
       const targetPath = path.resolve(resolvedPublic, relPath);
       if (!targetPath.startsWith(resolvedPublic + path.sep) && targetPath !== resolvedPublic) {
@@ -211,7 +354,10 @@ export function createAppServer({
       const ext = path.extname(filePath).toLowerCase();
       const contentType = MIME_TYPES[ext] || 'application/octet-stream';
       const content = await fs.readFile(filePath);
-      res.writeHead(200, { 'Content-Type': contentType });
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Cache-Control': 'no-cache, must-revalidate',
+      });
       res.end(content);
     } catch (err) {
       console.error('Server error:', err);
@@ -220,6 +366,9 @@ export function createAppServer({
       }
     }
   });
+
+  server.on('close', () => whisper.stop());
+  return server;
 }
 
 if (process.argv[1] === __filename) {

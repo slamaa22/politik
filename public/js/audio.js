@@ -80,7 +80,7 @@ export class SpeechStudioRecorder {
   #startSpeechRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
-      this.onSpeechError('Browser-Spracherkennung nicht verfügbar – Audio wird trotzdem voll analysiert (Transkript optional ergänzen).');
+      this.onSpeechError('Automatische Transkription wird nach dem Stoppen auf dem Server erstellt.');
       return;
     }
 
@@ -106,9 +106,9 @@ export class SpeechStudioRecorder {
 
       rec.onerror = (event) => {
         if (event.error === 'not-allowed') {
-          this.onSpeechError('Spracherkennung blockiert.');
+          this.onSpeechError('Browser-Spracherkennung blockiert – Transkript wird nach dem Stoppen auf dem Server erstellt.');
         } else if (event.error === 'network') {
-          this.onSpeechError('Live-Transkription offline/nicht erreichbar – Audioaufnahme, Pausen, Lautstärke & Tonfall laufen lokal weiter.');
+          this.onSpeechError('Browser-Live-Text nicht erreichbar – Transkript wird nach dem Stoppen automatisch über Server-Whisper erstellt.');
         }
       };
 
@@ -125,7 +125,7 @@ export class SpeechStudioRecorder {
       rec.start();
       this.recognition = rec;
     } catch {
-      this.onSpeechError('Live-Transkription konnte nicht gestartet werden.');
+      this.onSpeechError('Transkript wird nach dem Stoppen automatisch über Server-Whisper erstellt.');
     }
   }
 
@@ -228,12 +228,13 @@ export class SpeechStudioRecorder {
     }
 
     let audioUrl = null;
+    let recordedBlob = null;
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-      audioUrl = await new Promise((resolve) => {
+      recordedBlob = await new Promise((resolve) => {
         this.mediaRecorder.onstop = () => {
           if (this.chunks.length > 0) {
             const blob = new Blob(this.chunks, { type: this.mediaRecorder.mimeType || 'audio/webm' });
-            resolve(URL.createObjectURL(blob));
+            resolve(blob);
           } else {
             resolve(null);
           }
@@ -244,6 +245,9 @@ export class SpeechStudioRecorder {
           resolve(null);
         }
       });
+      if (recordedBlob) {
+        audioUrl = URL.createObjectURL(recordedBlob);
+      }
     }
     this.lastAudioUrl = audioUrl;
 
@@ -266,6 +270,7 @@ export class SpeechStudioRecorder {
       durationSec: Number(durationSec.toFixed(1)),
       samples: [...this.samples],
       audioUrl,
+      blob: recordedBlob,
       transcript: this.finalTranscript.trim(),
     };
   }
